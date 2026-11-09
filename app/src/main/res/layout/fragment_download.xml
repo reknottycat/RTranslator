@@ -106,6 +106,14 @@
                     android:textAllCaps="false" />
             </LinearLayout>
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/parallelismButton"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/cn_parallelism_choose"
+                android:textAllCaps="false"/>
+
             <ScrollView
                 android:id="@+id/downloadLogScroll"
                 android:layout_width="match_parent"
