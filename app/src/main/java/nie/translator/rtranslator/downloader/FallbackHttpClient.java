@@ -238,10 +238,7 @@ public final class FallbackHttpClient implements HttpClient {
             }
         } else {
             if (position != 0) throw new IOException("Model source ignored resume Range");
-            // Some CDN mirrors stream a complete HTTP 200 with chunked encoding.
-            // The exact upstream manifest gives an authoritative expected size, and
-            // the transfer still has to reach that size (plus SHA-256 when published).
-            responseTotal = length > 0 ? length : (metadata == null ? -1 : metadata.sizeBytes);
+            responseTotal = length;
         }
         if (responseTotal <= 0 || (total > 0 && responseTotal != total)) {
             throw new IOException("Model source returned the wrong file size");

@@ -1,0 +1,96 @@
+name: Verified ModelScope CN APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/modelscope-download-release]
+permissions:
+  contents: write
+concurrency:
+  group: verified-modelscope-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Integrate verified sources and checkpoint safeguards
+        run: |
+          set -euo pipefail
+          python tools/integrate_verified_sources.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/ docs/MODELSCOPE_INTEGRATION.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: integrate verified ModelScope primary and safe chunk retry state'
+            git push origin HEAD:fix/modelscope-download-release
+          fi
+          git rev-parse HEAD
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - name: Unit and real HTTP transport tests
+        run: bash ./gradlew --no-daemon --max-workers=2 -PcnBuild=true :app:testDebugUnitTest
+      - name: Build native ARM64 APK and lint report
+        run: bash ./gradlew --no-daemon --max-workers=2 -PcnBuild=true :app:lintDebug :app:assembleDebug
+      - name: Verify APK and preserve provenance
+        run: |
+          set -euo pipefail
+          mkdir -p app/build/verification
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$APK" | tee app/build/verification/apk-signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" > app/build/verification/apk-badging.txt
+          grep "package: name='nie.translator.rtranslator.cn'" app/build/verification/apk-badging.txt
+          grep '3.0.0-beta2-cn.3-modelscope' app/build/verification/apk-badging.txt
+          sha256sum "$APK" > app/build/verification/SHA256SUMS
+          git rev-parse HEAD > app/build/verification/source-commit.txt
+          git submodule status --recursive > app/build/verification/submodules.txt
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-ModelScope-CN-verified
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/verification/
+            reports/verified-modelscope.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable test APK
+        if: github.repository == 'reknottycat/RTranslator' && github.ref == 'refs/heads/fix/modelscope-download-release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE=$(git rev-parse HEAD)
+          TAG="cn-v3.0.0-beta2.3-ms-${SOURCE:0:8}"
+          mkdir -p app/build/release
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/release/RTranslator-3.0.0-beta2-cn.3-modelscope-arm64.apk
+          cp docs/MODELSCOPE_INTEGRATION.md app/build/release/NOTES.md
+          printf '\nSource commit: %s\nBuild run: https://github.com/%s/actions/runs/%s\n' "$SOURCE" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> app/build/release/NOTES.md
+          (cd app/build/release && sha256sum *.apk > SHA256SUMS)
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" app/build/release/*.apk app/build/release/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --target "$SOURCE" \
+              --title 'RTranslator CN · ModelScope 国内源 / 文件导入 / 分块续传' \
+              --notes-file app/build/release/NOTES.md --prerelease
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets,tagName
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ModelScope-CN-test-evidence
+          path: |
+            app/build/reports/
+            app/build/test-results/
+            app/build/verification/
+          if-no-files-found: warn
+          retention-days: 30
