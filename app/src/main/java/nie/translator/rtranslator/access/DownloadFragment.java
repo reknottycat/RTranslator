@@ -180,6 +180,25 @@ public class DownloadFragment extends Fragment {
         });
         sourceModeButton.setText(getString(R.string.cn_source_choose)
                 + " · " + DownloadSourceOrder.modeName(DownloadSourceOrder.get()));
+        MaterialButton parallelismButton = requireView().findViewById(R.id.parallelismButton);
+        parallelismButton.setText(getString(R.string.cn_parallelism_choose)
+                + " · " + DownloadSourceOrder.parallelThreads(requireContext()) + " 路");
+        parallelismButton.setOnClickListener(v ->
+                new AlertDialog.Builder(requireContext())
+                        .setTitle("4 MiB 分块下载并发数")
+                        .setSingleChoiceItems(new String[]{"14 路（推荐）", "28 路（高速网络）"},
+                                DownloadSourceOrder.parallelThreads(requireContext()) == 28 ? 1 : 0,
+                                (dialog, selected) -> {
+                                    int threads = selected == 1 ? 28 : 14;
+                                    DownloadSourceOrder.setParallelThreads(requireContext(), threads);
+                                    parallelismButton.setText(getString(R.string.cn_parallelism_choose)
+                                            + " · " + threads + " 路");
+                                    downloader.pauseAllDownloads();
+                                    startAllDownloads();
+                                    dialog.dismiss();
+                                })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show());
         toggleLogButton.setOnClickListener(v -> {
             boolean expand = downloadLogScroll.getVisibility() != View.VISIBLE;
             downloadLogScroll.setVisibility(expand ? View.VISIBLE : View.GONE);
