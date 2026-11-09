@@ -1,0 +1,75 @@
+name: Publish CN beta2 APK to public Releases
+
+on:
+  push:
+    branches:
+      - chore/publish-cn-beta2-apk
+    paths:
+      - .github/workflows/publish-cn-release.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'reknottycat/RTranslator'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download the already verified Android CI APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-staging
+          gh run download 42626247096 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name RTranslator-3.0.0-beta2-cn-arm64 \
+            --dir release-staging
+          find release-staging -maxdepth 5 -type f -print
+          mapfile -t apks < <(find release-staging -type f -name '*.apk')
+          if [[ ${#apks[@]} -ne 1 ]]; then
+            echo "Expected exactly one APK in validated CI artifact; got ${#apks[@]}" >&2
+            exit 1
+          fi
+          cp "${apks[0]}" RTranslator-3.0.0-beta2-cn.1-arm64.apk
+          sha256sum RTranslator-3.0.0-beta2-cn.1-arm64.apk | tee SHA256SUMS
+      - name: Create public prerelease with direct APK asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=cn-v3.0.0-beta2.1
+          cat > release-notes.md <<'EOF'
+          Unofficial, debug-signed China-friendly fork of RTranslator **3.0.0-beta2**.
+
+          - First attempts official model downloads, then two fallback GitHub proxies.
+          - Restores manually copied original model asset import (see docs/CN_DOWNLOADS.md).
+          - ARM64, Android 9+, package nie.translator.rtranslator.cn; can coexist with official RTranslator.
+          - The APK asset was copied **unchanged** from verified GitHub Actions run [42626247096](https://github.com/reknottycat/RTranslator/actions/runs/42626247096). Tests, APK verification and native build passed.
+          - **Debug signing only:** a different signer than independently built APKs. Android updates between differently signed builds require uninstalling first; back up data/models before doing so.
+          - Model downloads and external sideloading have not been fully acceptance-tested on a mainland-China physical device.
+
+          Source commit: 2762c6185f9f8ff7dcf97943a25e688377c8d4ef
+
+          [Changes and documentation](https://github.com/reknottycat/RTranslator/pull/1)
+
+          APK SHA-256:
+          EOF
+          cat SHA256SUMS >> release-notes.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              RTranslator-3.0.0-beta2-cn.1-arm64.apk#RTranslator-3.0.0-beta2-cn.1-arm64.apk \
+              --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              RTranslator-3.0.0-beta2-cn.1-arm64.apk#RTranslator-3.0.0-beta2-cn.1-arm64.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target 2762c6185f9f8ff7dcf97943a25e688377c8d4ef \
+              --title "RTranslator 3.0.0-beta2 CN test APK" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
