@@ -139,7 +139,9 @@ public class MessagesAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             callback.onFirstItemAdded();
         }
         messages.add(message);
-        notifyItemInserted(getItemCount() - 1);
+        if (messages.size() > nie.translator.rtranslator.voice_translation.live.CaptionPolicy.MAX_HISTORY) {
+            messages.remove(0); notifyDataSetChanged();
+        } else notifyItemInserted(getItemCount() - 1);
     }
 
     public void setMessage(int index, GuiMessage message) {
@@ -189,11 +191,11 @@ public class MessagesAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         if(oldPlayingMessageId != playingMessageID){
             if(oldPlayingMessageId != -1) {
                 int index = getMessageIndex(oldPlayingMessageId);
-                notifyItemChanged(index);
+                if (index >= 0) notifyItemChanged(index);
             }
             if(playingMessageID != -1){
                 int index = getMessageIndex(playingMessageID);
-                notifyItemChanged(index);
+                if (index >= 0) notifyItemChanged(index);
                 //todo: I can insert a scroll to the playing message here
             }
         }
@@ -297,6 +299,11 @@ public class MessagesAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
 
         public void bind(GuiMessage message, long playingMessageID, View.OnClickListener playListener){
             this.message = message;
+            // Meetings always retain bilingual evidence; recycled holders must restore visibility.
+            boolean bilingual = showOriginalTranscriptionMsg ||
+                    nie.translator.rtranslator.voice_translation.live.MeetingPreferences.enabled(itemView.getContext());
+            originalTextToBeTranslated.setVisibility(bilingual ? View.VISIBLE : View.GONE);
+            ttsButton.setVisibility(nie.translator.rtranslator.voice_translation.live.MeetingPreferences.enabled(itemView.getContext()) ? View.GONE : View.VISIBLE);
             // Bind message text
             setText(message.getMessage().getTextToTranslate(), message.getMessage().getText());
             // Bind tts button status and listener

@@ -63,6 +63,20 @@ public class Recorder {
     private final Global global;
     private volatile boolean isRecording;
     private volatile boolean isManualMode = false;
+    private volatile boolean captionCapture = false;
+    private volatile boolean enhanceInput = false;
+    private final nie.translator.rtranslator.voice_translation.live.CaptureGain captureGain =
+            new nie.translator.rtranslator.voice_translation.live.CaptureGain();
+
+    /** Opt-in short caption segments. The legacy recorder profile remains the default. */
+    public void configureCaptionCapture(boolean enabled, boolean boost) {
+        captionCapture = enabled;
+        enhanceInput = boost;
+        post(captureGain::reset);
+    }
+
+    public boolean isCapturing() { return running; }
+
     public static final int[] SAMPLE_RATE_CANDIDATES = new int[]{16000};
     private static final int CHANNEL = AudioFormat.CHANNEL_IN_MONO;
     private static int ENCODING;
@@ -492,7 +506,7 @@ public class Recorder {
                         if (isManualMode) {
                             prevVoiceLength = (int) (0.1 * sampleRate);  //if we are using manual mode we use a reduced prev voice duration
                         } else {
-                            prevVoiceLength = (global.getPrevVoiceDuration() * sampleRate) / 1000;
+                            prevVoiceLength = ((captionCapture ? 300 : global.getPrevVoiceDuration()) * sampleRate) / 1000;
                         }
                         int size;
                         int oldTailIndex = tailIndex;
@@ -538,11 +552,11 @@ public class Recorder {
                                 }
                             }
                             mLastVoiceHeardMillis = now;
-                            if (now - (mVoiceStartedMillis - global.getPrevVoiceDuration()) > MAX_SPEECH_LENGTH_MILLIS) {  //if we are listening voice for more than MAX_SPEECH_LENGTH_MILLIS
+                            if (now - (mVoiceStartedMillis - (captionCapture ? 300 : global.getPrevVoiceDuration())) > (captionCapture ? nie.translator.rtranslator.voice_translation.live.CaptionPolicy.SEGMENT_MS : MAX_SPEECH_LENGTH_MILLIS)) {  //if we are listening voice for more than MAX_SPEECH_LENGTH_MILLIS
                                 executeEnd();
                             }
                         } else if (mLastVoiceHeardMillis != Long.MAX_VALUE) {   // use Long's maximum limit to indicate that we have no voice (the mic is not listening)
-                            if ((now - mLastVoiceHeardMillis > global.getSpeechTimeout()) || shouldVirtualMuteMic()) {  //if we had not heard voice for global.getSpeechTimeout() ms or the mic is virtually muted
+                            if ((now - mLastVoiceHeardMillis > (captionCapture ? nie.translator.rtranslator.voice_translation.live.CaptionPolicy.SILENCE_MS : global.getSpeechTimeout())) || shouldVirtualMuteMic()) {  //if we had not heard voice for global.getSpeechTimeout() ms or the mic is virtually muted
                                 executeEnd();
                             }
                         }
@@ -606,6 +620,8 @@ public class Recorder {
         mLastVoiceHeardMillis = Long.MAX_VALUE;
         startVoiceIndex = 0;
 
+        // Caption segments do not replay the preceding segment's pre-roll at each hard boundary.
+        if (captionCapture) headIndex = tailIndex;
         mCallback.onVoice(data, voiceLength);
         isRecording = false;
         mCallback.onVoiceEnd();
@@ -636,7 +652,7 @@ public class Recorder {
             // To do this, we iterate the section just wrote of mBuffer, convert each value from ENCODING_PCM_FLOAT to ENCODING_PCM_16BIT and insert these values in the corresponding section of mBufferShort.
             for(int i=offset; i<offset+outputSize; i++){
                 //The range with ENCODING_PCM_16BIT is [-32768, 32767], while with ENCODING_PCM_FLOAT it is [-1, 1], so we convert accordingly
-                mBufferShort[i] = (short) (mBuffer[i] * 32768);
+                mBufferShort[i] = (short) Math.max(-32768, Math.min(32767, mBuffer[i] * 32768));
             }
         }else{  //ENCODING == AudioFormat.ENCODING_PCM_16BIT
             outputSize = mAudioRecord.read(mBufferShort, offset, size, AudioRecord.READ_BLOCKING);
@@ -646,6 +662,12 @@ public class Recorder {
                 //The range with ENCODING_PCM_16BIT is [-32768, 32767], while with ENCODING_PCM_FLOAT it is [-1, 1], so we convert accordingly
                 mBuffer[i] = (float) mBufferShort[i] / 32768;
             }
+        }
+
+        if (enhanceInput && outputSize > 0) {
+            captureGain.process(mBuffer, offset, outputSize);
+            for (int i = offset; i < offset + outputSize; i++)
+                mBufferShort[i] = (short) Math.max(-32768, Math.min(32767, mBuffer[i] * 32768));
         }
 
         // SOFTWARE MUTE: If TalkBack or TTS is speaking and the mic is not connected to BLE headset, zero out the buffers
@@ -680,7 +702,7 @@ public class Recorder {
                 }
                 chunks.get(chunks.size()-1)[chunkCount] = buffer[count];
                 chunkCount++;
-                int amplitudeThreshold = global.getAmplitudeThreshold();
+                int amplitudeThreshold = enhanceInput ? Math.max(MIN_AMPLITUDE_THRESHOLD, global.getAmplitudeThreshold() / 2) : global.getAmplitudeThreshold();
                 // check the volume level
                 int s = Math.abs(buffer[count]);
                 if (s > amplitudeThreshold) {

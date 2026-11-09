@@ -295,6 +295,27 @@ public class Recognizer extends NeuralNetworkApi {
         }.start();
     }
 
+    /** Request-local callbacks prevent old sessions from delivering text into a new screen. */
+    public interface ScopedCallback {
+        void onResult(String firstText, String firstLanguage, double firstScore,
+                      String secondText, String secondLanguage, double secondScore);
+        void onError(int[] reasons, long value);
+    }
+
+    public void recognizeScoped(float[] audio, int beamSize, String firstLanguage,
+                                String secondLanguage, ScopedCallback callback) {
+        if (audio == null || audio.length == 0 || callback == null)
+            throw new IllegalArgumentException("Audio and callback are required");
+        new Thread(() -> {
+            synchronized (lock) {
+                DataContainer item = new DataContainer(audio, beamSize, firstLanguage, secondLanguage);
+                item.scopedCallback = callback;
+                dataToRecognize.addLast(item);
+                if (!recognizing) recognize();
+            }
+        }, "scoped-whisper").start();
+    }
+
     private void recognize() {
         recognizing = true;
         DataContainer data = dataToRecognize.pollFirst();
@@ -517,7 +538,13 @@ public class Recognizer extends NeuralNetworkApi {
                         android.util.Log.i("score", "score: " + outputProbability1);
 
                         outputs.close();
-                        notifyResult(correctText(finalText), data.languageCode, outputProbability1, true);
+                        if (data.scopedCallback != null) {
+                            data.scopedCompleted = true;
+                            data.scopedCallback.onResult(correctText(finalText), data.languageCode,
+                                    outputProbability1, null, null, -Double.MAX_VALUE);
+                        } else {
+                            notifyResult(correctText(finalText), data.languageCode, outputProbability1, true);
+                        }
 
                     }else{
                         String firstText = UNDEFINED_TEXT;
@@ -546,7 +573,14 @@ public class Recognizer extends NeuralNetworkApi {
                         android.util.Log.i("result", "score 1: " + outputProbability1);
                         android.util.Log.i("result", "score 2: " + outputProbability2);
 
-                        notifyMultiResult(correctText(firstText), data.languageCode, outputProbability1, correctText(secondText), data.languageCode2, outputProbability2);
+                        if (data.scopedCallback != null) {
+                            data.scopedCompleted = true;
+                            data.scopedCallback.onResult(correctText(firstText), data.languageCode,
+                                    outputProbability1, correctText(secondText), data.languageCode2, outputProbability2);
+                        } else {
+                            notifyMultiResult(correctText(firstText), data.languageCode, outputProbability1,
+                                    correctText(secondText), data.languageCode2, outputProbability2);
+                        }
                     }
                     //closing all results
                     outputs.close();
@@ -557,9 +591,18 @@ public class Recognizer extends NeuralNetworkApi {
 
                 } catch (Exception e) {
                     e.printStackTrace();
-                    notifyError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
+                    if (data.scopedCallback != null) {
+                        if (!data.scopedCompleted) {
+                            data.scopedCompleted = true;
+                            data.scopedCallback.onError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
+                        }
+                    } else notifyError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
                 }
             }
+        }
+        if (data != null && data.scopedCallback != null && !data.scopedCompleted) {
+            data.scopedCompleted = true;
+            data.scopedCallback.onError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
         }
         if (!dataToRecognize.isEmpty()){
             recognize();
@@ -679,6 +722,8 @@ public class Recognizer extends NeuralNetworkApi {
         private String languageCode;
         private String languageCode2;
         private int beamSize;
+        private ScopedCallback scopedCallback;
+        private boolean scopedCompleted;
 
         private DataContainer(float[] data, int beamSize, String languageCode){
             this.data = data;

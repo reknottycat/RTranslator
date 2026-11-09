@@ -1,17 +1,14 @@
 package nie.translator.rtranslator.downloader;
 
-import android.util.Log;
+
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 
 /** Bounded, in-memory diagnostics for the onboarding model download screen. */
 public final class ModelDownloadLog {
-    private static final String TAG = "RTranslatorModelDownload";
     private static final int MAX_ENTRIES = 20;
     private static final ArrayDeque<String> EVENTS = new ArrayDeque<>();
     private static String activeSource = "尚未连接下载源";
@@ -26,7 +23,7 @@ public final class ModelDownloadLog {
         String line = time + "  " + label + "  " + event;
         if (EVENTS.size() == MAX_ENTRIES) EVENTS.removeFirst();
         EVENTS.addLast(line);
-        Log.i(TAG, line);
+        // Kept in the bounded UI log; no Android framework calls on the transport test path.
     }
 
     public static synchronized String summary() {
@@ -40,6 +37,7 @@ public final class ModelDownloadLog {
     }
 
     private static String label(String raw) {
+        if ("local-file".equals(raw)) return "本地模型文件";
         if (raw == null) return "未知来源";
         try {
             URL url = new URL(raw);

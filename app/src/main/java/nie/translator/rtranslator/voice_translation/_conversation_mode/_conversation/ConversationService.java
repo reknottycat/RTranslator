@@ -27,6 +27,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import nie.translator.rtranslator.voice_translation.live.MeetingPreferences;
+import nie.translator.rtranslator.voice_translation.live.CaptionPolicy;
+import nie.translator.rtranslator.voice_translation.live.ConversationPacket;
 
 import nie.translator.rtranslator.Global;
 import nie.translator.rtranslator.bluetooth.Message;
@@ -64,6 +68,16 @@ public class ConversationService extends VoiceTranslationService {
     private static Handler mHandler = new Handler();
     private Handler mainHandler;
     public static boolean isRunning = false;
+    private final ArrayDeque<SpeechTurn> speechTurns = new ArrayDeque<>();
+    private boolean recognizingTurn;
+    private boolean serviceDestroyed;
+    private int sessionEpoch;
+    private volatile String capturedInputLanguage;
+    private final ArrayDeque<Message> incomingTurns = new ArrayDeque<>();
+    private boolean translatingTurn;
+    private long incomingSequence;
+    private SharedPreferences.OnSharedPreferenceChangeListener meetingListener;
+
 
 
     @Override
@@ -73,7 +87,13 @@ public class ConversationService extends VoiceTranslationService {
         global = (Global) getApplication();
         mainHandler = new Handler(Looper.getMainLooper());
         SharedPreferences sharedPreferences = this.getSharedPreferences("default", Context.MODE_PRIVATE);
-        isAudioMute = !sharedPreferences.getBoolean("conversationAutoTTS", true);
+        isAudioMute = MeetingPreferences.enabled(this) || !sharedPreferences.getBoolean("conversationAutoTTS", true);
+        if (MeetingPreferences.enabled(this)) isMicMute = !MeetingPreferences.sendsMic(this);
+        meetingListener = (prefs, key) -> {
+            if (MeetingPreferences.ENABLED.equals(key) || MeetingPreferences.SEND_MIC.equals(key)
+                    || MeetingPreferences.BOOST.equals(key)) mainHandler.post(this::applyMeetingSettings);
+        };
+        sharedPreferences.registerOnSharedPreferenceChangeListener(meetingListener);
         //startBluetoothSco
         //mBluetoothHelper = new BluetoothHelper(this);
         mVoiceCallback = new Recorder.Callback() {
@@ -81,6 +101,7 @@ public class ConversationService extends VoiceTranslationService {
             public void onVoiceStart() {
                 if (mVoiceRecognizer != null) {
                     super.onVoiceStart();
+                    capturedInputLanguage = MeetingPreferences.input(global).getCode();
                     Log.e("recorder","onVoiceStart");
                     //we notify the client
                     ConversationService.super.notifyVoiceStart();
@@ -91,11 +112,8 @@ public class ConversationService extends VoiceTranslationService {
             public void onVoice(@NonNull float[] data, int size) {
                 if (mVoiceRecognizer != null) {
                     super.onVoice(data,size);
-                    CustomLocale language = global.getLanguage(true);
-                    int sampleRate = getVoiceRecorderSampleRate();
-                    if (sampleRate != 0) {
-                        mVoiceRecognizer.recognize(data, SPEECH_BEAM_SIZE, language.getCode());
-                    }
+                    String language = capturedInputLanguage != null ? capturedInputLanguage : MeetingPreferences.input(global).getCode();
+                    if (getVoiceRecorderSampleRate() != 0) mainHandler.post(() -> enqueueSpeech(data, language));
                 }
             }
 
@@ -121,6 +139,11 @@ public class ConversationService extends VoiceTranslationService {
                 int command = message.getData().getInt("command", -1);
                 final String text = message.getData().getString("text");
                 if (command != -1) {
+                    if (MeetingPreferences.enabled(ConversationService.this)) {
+                        if (command == START_MIC) MeetingPreferences.prefs(ConversationService.this).edit().putBoolean(MeetingPreferences.SEND_MIC, true).apply();
+                        if (command == STOP_MIC && message.getData().getBoolean("permanent")) MeetingPreferences.prefs(ConversationService.this).edit().putBoolean(MeetingPreferences.SEND_MIC, false).apply();
+                        if (command == START_SOUND) return true;
+                    }
                     if (!ConversationService.super.executeCommand(command, message.getData())) {
                         switch (command) {
                             case START_SOUND: {
@@ -143,7 +166,7 @@ public class ConversationService extends VoiceTranslationService {
                                 break;
                             }
                             case RECEIVE_TEXT:
-                                CustomLocale language = global.getLanguage(true);
+                                CustomLocale language = MeetingPreferences.input(global);
                                 if (text != null) {
                                     GuiMessage guiMessage = new GuiMessage(new Message(global, text), language, language, global.getTranslator().incrementCurrentResultID(), true, true);
                                     // send the message
@@ -164,44 +187,7 @@ public class ConversationService extends VoiceTranslationService {
             @Override
             public void onMessageReceived(final Message message) {
                 super.onMessageReceived(message);
-                CustomLocale language = global.getLanguage(false);
-                String completeText = message.getText();
-                int languageCodeSize = Integer.valueOf(completeText.substring(completeText.length() - 1));
-                String text = completeText.substring(0, completeText.length() - (languageCodeSize + 1));
-                String languageCode = completeText.substring(completeText.length() - (languageCodeSize + 1), completeText.length() - 1);
-                ConversationMessage conversationMessage = new ConversationMessage(message.getSender(), new NeuralNetworkApiText(text, CustomLocale.getInstance(languageCode)));
-                translator.translateMessage(conversationMessage, language, TRANSLATOR_BEAM_SIZE, new Translator.TranslateListener() {
-                    @Override
-                    public void onTranslatedText(String textToTranslate, String translatedText, @Nullable String[] synonyms, long resultID, boolean isFinal, ResultType resultType, CustomLocale inputLanguage, CustomLocale outputLanguage) {
-                        global.getTTSLanguages(true, new Global.GetLocalesListListener() {
-                            @Override
-                            public void onSuccess(ArrayList<CustomLocale> ttsLanguages) {
-                                // updating the text with the new translated and the new transcribed text (and without the language code)
-                                message.setTextToTranslate(text);
-                                message.setText(translatedText);
-                                GuiMessage guiMessage = new GuiMessage(message, inputLanguage, outputLanguage, resultID, false, isFinal);
-                                if(isFinal && CustomLocale.containsLanguage(ttsLanguages, outputLanguage) && !isAudioMute) { // check if the language can be spoken
-                                    speak(guiMessage, outputLanguage);
-                                }
-                                notifyMessage(guiMessage);
-                                // we save every new message in the exchanged messages so that the fragment can restore them
-                                addOrUpdateMessage(guiMessage);
-                            }
-
-                            @Override
-                            public void onFailure(int[] reasons, long value) {
-                                //never called in this case
-                            }
-                        });
-                    }
-
-                    @Override
-                    public void onFailure(int[] reasons, long value) {
-                        //todo: improve the error handling for missing languages, if the error is ERROR_LANGUAGE_NOT_SUPPORTED, create a GuiMessage like above (onTranslatedMessage)
-                        // but with an indication of the error. Update the Adapter of the messages to show the error (something like "Language not supported" as the content of the message, shown in red)
-                        ConversationService.super.notifyError(reasons, value);
-                    }
-                });
+                mainHandler.post(() -> enqueueIncoming(message));
             }
 
             @Override
@@ -254,7 +240,7 @@ public class ConversationService extends VoiceTranslationService {
             }
         };
 
-        mVoiceRecognizer.addCallback(mVoiceRecognizerCallback);
+        // New requests use request-local callbacks, preventing cross-session delivery.
         //mBluetoothHelper.start();
 
         translator.loadTgtLangResourcesForConversation(global.getLanguage(true), new Translator.GeneralListener() {
@@ -263,6 +249,148 @@ public class ConversationService extends VoiceTranslationService {
                 //voice recorder initialization
                 initializeVoiceRecorder();
             }
+        });
+    }
+
+
+    private String meetingText(String zh, String en) {
+        return getResources().getConfiguration().getLocales().get(0).getLanguage().equals("zh") ? zh : en;
+    }
+
+    private void applyMeetingSettings() {
+        if (serviceDestroyed || !isRunning) return;
+        boolean meeting = MeetingPreferences.enabled(this);
+        isAudioMute = meeting || !MeetingPreferences.prefs(this).getBoolean("conversationAutoTTS", true);
+        if (meeting && ttsEngine != null) ttsEngine.stop();
+        if (mVoiceRecorder != null) mVoiceRecorder.configureCaptionCapture(meeting, MeetingPreferences.prefs(this).getBoolean(MeetingPreferences.BOOST, false));
+        if (meeting) {
+            isMicMute = !MeetingPreferences.sendsMic(this);
+            if (isMicMute) {
+                endVoice(); stopVoiceRecorder(); notifyMicDeactivated();
+            } else {
+                MeetingPreferences.runtimeStatus = "";
+                startVoiceRecorder(); notifyMicActivated();
+            }
+        }
+    }
+
+    @Override public void startVoiceRecorder() {
+        if (MeetingPreferences.enabled(this) && !MeetingPreferences.sendsMic(this)) { isMicMute = true; return; }
+        if (mVoiceRecorder != null && mVoiceRecorder.isCapturing()) return;
+        super.startVoiceRecorder();
+    }
+
+    @Override public synchronized void speak(GuiMessage message, CustomLocale language) {
+        // A meeting receiver must not feed its translation back into nearby microphones.
+        if (!MeetingPreferences.enabled(this)) super.speak(message, language);
+    }
+
+    private static final class SpeechTurn {
+        final float[] pcm; final String language;
+        SpeechTurn(float[] pcm, String language) { this.pcm = pcm; this.language = language; }
+    }
+
+    private void enqueueSpeech(float[] pcm, String language) {
+        if (serviceDestroyed || !isRunning || pcm.length < 1600) return;
+        if (speechTurns.size() >= CaptionPolicy.MAX_PENDING_AUDIO) {
+            MeetingPreferences.runtimeStatus = meetingText("语音积压过多；本段未排入，请重说。", "Speech queue full; please repeat the last segment.");
+            pauseForBackpressure(); return;
+        }
+        speechTurns.addLast(new SpeechTurn(pcm, language));
+        if (speechTurns.size() >= CaptionPolicy.MAX_PENDING_AUDIO) {
+            pauseForBackpressure();
+            MeetingPreferences.runtimeStatus = meetingText("处理赶不上收音，已暂停麦克风。处理结束后重新开启。", "Capture paused to catch up. Re-enable the mic after processing.");
+        }
+        processSpeech();
+    }
+
+    private void pauseForBackpressure() {
+        isMicMute = true; stopVoiceRecorder(); notifyMicDeactivated();
+        if (MeetingPreferences.enabled(this)) MeetingPreferences.prefs(this).edit().putBoolean(MeetingPreferences.SEND_MIC, false).apply();
+    }
+
+    private void processSpeech() {
+        if (serviceDestroyed || !isRunning || recognizingTurn || speechTurns.isEmpty()) return;
+        SpeechTurn turn = speechTurns.removeFirst(); recognizingTurn = true;
+        final int epoch = sessionEpoch;
+        mVoiceRecognizer.recognizeScoped(turn.pcm, MeetingPreferences.enabled(this) ? 1 : SPEECH_BEAM_SIZE,
+                turn.language, null, new Recognizer.ScopedCallback() {
+            @Override public void onResult(String text, String language, double score, String unused, String unusedLanguage, double unusedScore) {
+                mainHandler.post(() -> {
+                    if (serviceDestroyed || !isRunning || epoch != sessionEpoch) return;
+                    if (CaptionPolicy.usable(text)) mVoiceRecognizerCallback.onSpeechRecognizedResult(text, language, score, true);
+                    recognizingTurn = false; processSpeech();
+                });
+            }
+            @Override public void onError(int[] reasons, long value) {
+                mainHandler.post(() -> {
+                    if (serviceDestroyed || !isRunning || epoch != sessionEpoch) return;
+                    recognizingTurn = false;
+                    MeetingPreferences.runtimeStatus = meetingText("语音识别失败，请检查本机发言语言。", "Recognition failed; check this device's spoken language.");
+                    ConversationService.super.notifyError(reasons, value); processSpeech();
+                });
+            }
+        });
+    }
+
+    private void enqueueIncoming(Message message) {
+        if (serviceDestroyed || !isRunning) return;
+        if (incomingTurns.size() >= 24) {
+            MeetingPreferences.runtimeStatus = meetingText("接收译文积压：有消息未处理，请减慢发言。", "Receive queue full: some messages were not processed. Please slow down.");
+            return;
+        }
+        incomingTurns.addLast(message); processIncoming();
+    }
+
+    private void processIncoming() {
+        if (serviceDestroyed || !isRunning || translatingTurn || incomingTurns.isEmpty()) return;
+        Message message = incomingTurns.removeFirst(); translatingTurn = true;
+        final long sequence = ++incomingSequence; final int epoch = sessionEpoch;
+        final CustomLocale target = global.getLanguage(false);
+        ConversationPacket packet = ConversationPacket.parse(message.getText());
+        if (packet == null || packet.text.trim().isEmpty()) { finishIncoming(sequence); return; }
+        final String original = packet.text;
+        ConversationMessage conversationMessage = new ConversationMessage(message.getSender(),
+                new NeuralNetworkApiText(original, CustomLocale.getInstance(packet.language)));
+        translator.translateMessage(conversationMessage, target, TRANSLATOR_BEAM_SIZE, new Translator.TranslateListener() {
+            @Override public void onTranslatedText(String input, String translated, @Nullable String[] synonyms,
+                    long resultID, boolean isFinal, ResultType kind, CustomLocale source, CustomLocale output) {
+                mainHandler.post(() -> {
+                    if (serviceDestroyed || !isRunning || epoch != sessionEpoch || sequence != incomingSequence) return;
+                    message.setTextToTranslate(original); message.setText(translated);
+                    GuiMessage gui = new GuiMessage(message, source, output, resultID, false, isFinal);
+                    notifyMessage(gui); addOrUpdateMessage(gui);
+                    if (isFinal) {
+                        if (!isAudioMute && !MeetingPreferences.enabled(ConversationService.this)) {
+                            global.getTTSLanguages(true, new Global.GetLocalesListListener() {
+                                @Override public void onSuccess(ArrayList<CustomLocale> languages) {
+                                    if (!serviceDestroyed && epoch == sessionEpoch && !isAudioMute && CustomLocale.containsLanguage(languages, output)) speak(gui, output);
+                                }
+                                @Override public void onFailure(int[] reasons, long value) { /* Captions do not depend on TTS. */ }
+                            });
+                        }
+                        finishIncoming(sequence);
+                    }
+                });
+            }
+            @Override public void onFailure(int[] reasons, long value) {
+                mainHandler.post(() -> {
+                    if (serviceDestroyed || epoch != sessionEpoch || sequence != incomingSequence) return;
+                    message.setTextToTranslate(original);
+                    message.setText(meetingText("翻译失败，原文已保留。", "Translation failed; original retained."));
+                    GuiMessage gui = new GuiMessage(message, CustomLocale.getInstance(packet.language), target,
+                            translator.incrementCurrentResultID(), false, true);
+                    notifyMessage(gui); addOrUpdateMessage(gui);
+                    ConversationService.super.notifyError(reasons, value); finishIncoming(sequence);
+                });
+            }
+        });
+    }
+
+    private void finishIncoming(long sequence) {
+        mainHandler.post(() -> {
+            if (serviceDestroyed || !isRunning || sequence != incomingSequence || !translatingTurn) return;
+            translatingTurn = false; processIncoming();
         });
     }
 
@@ -278,6 +406,7 @@ public class ConversationService extends VoiceTranslationService {
         if (Tools.hasPermissions(this, Global.REQUIRED_PERMISSIONS_VOICE)) {
             //voice recorder initialization
             super.mVoiceRecorder = new Recorder((Global) getApplication(), true, mVoiceCallback, new BluetoothHeadsetCallback(), global.getVad());
+            mVoiceRecorder.configureCaptionCapture(MeetingPreferences.enabled(this), MeetingPreferences.prefs(this).getBoolean(MeetingPreferences.BOOST, false));
         }
     }
 
@@ -305,10 +434,15 @@ public class ConversationService extends VoiceTranslationService {
 
     @Override
     public void onDestroy() {
+        serviceDestroyed = true;
+        ++sessionEpoch;
+        speechTurns.clear(); incomingTurns.clear(); incomingSequence++;
+        if (meetingListener != null) MeetingPreferences.prefs(this).unregisterOnSharedPreferenceChangeListener(meetingListener);
+        MeetingPreferences.runtimeStatus = "";
         // Stop SpeechRecognizer
         //mVoiceRecognizer.destroy();
         mVoiceRecognizer.removeCallback(mVoiceRecognizerCallback);
-        mVoiceRecognizer.stop();
+        // An in-flight native call finishes silently through its expired session callback.
         mVoiceRecognizer = null;
         //stop Bluetooth helper
         //mBluetoothHelper.stop();

@@ -19,7 +19,8 @@
 apply plugin: 'com.android.application'
 
 // Opt-in fork package so the test APK can coexist with the upstream app.
-def cnBuild = project.findProperty('cnBuild') == 'true'
+def conversationBuild = project.findProperty('conversationBuild') == 'true'
+def cnBuild = project.findProperty('cnBuild') == 'true' || conversationBuild
 
 ext {
     supportLibraryVersion = '1.0.0'
@@ -32,15 +33,15 @@ android {
     ndkVersion "28.0.12674087"
     defaultConfig {
         applicationId "nie.translator.rtranslator"
-        manifestPlaceholders = [appLabel: cnBuild ? 'RTranslator CN' : '@string/app_name']
+        manifestPlaceholders = [appLabel: conversationBuild ? 'RTranslator CN Meeting' : (cnBuild ? 'RTranslator CN' : '@string/app_name')]
         targetSdkVersion 36   //32
         compileSdk 36
         versionName '3.0.0-beta2'
         versionCode 27
         if (cnBuild) {
-            applicationIdSuffix '.cn'
-            versionNameSuffix '-cn.1'
-            versionCode 28
+            applicationIdSuffix (conversationBuild ? '.cn.meeting' : '.cn')
+            versionNameSuffix (conversationBuild ? '-cn.2-meeting.1' : '-cn.1')
+            versionCode (conversationBuild ? 29 : 28)
             ndk {
                 abiFilters 'arm64-v8a'
             }

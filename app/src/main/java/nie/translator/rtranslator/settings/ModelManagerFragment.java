@@ -68,6 +68,8 @@ public class ModelManagerFragment extends Fragment {
     private Activity activity;
     private Global global;
     private DownloadManager downloadManager;
+    private final nie.translator.rtranslator.downloader.ModelFileImporter modelImporter =
+            new nie.translator.rtranslator.downloader.ModelFileImporter(this);
     private HashMap<String, ResourceManager> resourceManagers = new HashMap<>();
     private DownloadManager.Callback downloadManagerCallback;
     // gui
@@ -103,6 +105,10 @@ public class ModelManagerFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        view.findViewById(R.id.import_original_models).setOnClickListener(v -> {
+            if (downloadManager != null) downloadManager.pauseAllDownloads();
+            modelImporter.launch(null);
+        });
         radioGroup = view.findViewById(R.id.model_radios);
         radioMozilla = view.findViewById(R.id.radioMozilla);
         radioHy = view.findViewById(R.id.radioHY);

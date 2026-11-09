@@ -565,6 +565,20 @@
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintVertical_bias="1.0">
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/single_device_conversation"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginEnd="16dp"
+                        android:minHeight="48dp"
+                        android:text="@string/single_device_conversation"
+                        android:textAllCaps="false"
+                        app:cornerRadius="20dp"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent" />
+
                     <nie.translator.rtranslator.tools.gui.AutoScrollMaterialButton
                         android:id="@+id/buttonTranslate"
                         android:layout_width="wrap_content"
@@ -630,7 +644,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="24dp"
-                        android:layout_marginTop="16dp"
+                        android:layout_marginTop="64dp"
                         android:layout_marginBottom="8dp"
                         android:clickable="true"
                         android:focusable="true"

@@ -298,6 +298,8 @@ public abstract class VoiceTranslationService extends GeneralService {
             }
         }
         messages.add(message);
+        while (messages.size() > nie.translator.rtranslator.voice_translation.live.CaptionPolicy.MAX_HISTORY)
+            messages.remove(0);
     }
 
     // other

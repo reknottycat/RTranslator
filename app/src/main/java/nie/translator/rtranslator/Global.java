@@ -763,6 +763,7 @@ public class Global extends Application implements DefaultLifecycleObserver {
     }
 
     public void setLanguage(CustomLocale language) {
+        nie.translator.rtranslator.voice_translation.live.MeetingPreferences.input(this);
         this.language = language;
         SharedPreferences sharedPreferences = this.getSharedPreferences("default", Context.MODE_PRIVATE);
         SharedPreferences.Editor editor = sharedPreferences.edit();
@@ -771,7 +772,7 @@ public class Global extends Application implements DefaultLifecycleObserver {
         if(ConversationService.isRunning && translator != null){
             translator.loadTgtLangResourcesForConversation(language, null);
             if(getBluetoothCommunicator() != null){
-                getBluetoothCommunicator().sendLanguage(language);
+                getBluetoothCommunicator().sendLanguage(nie.translator.rtranslator.voice_translation.live.MeetingPreferences.input(this));
             }
         }
     }

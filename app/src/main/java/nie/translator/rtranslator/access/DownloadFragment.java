@@ -19,18 +19,6 @@ package nie.translator.rtranslator.access;
 import android.annotation.SuppressLint;
 import android.icu.text.DecimalFormat;
 import android.os.Bundle;
-import android.net.Uri;
-import android.provider.OpenableColumns;
-import android.database.Cursor;
-import android.widget.Toast;
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import java.io.File;
-import java.io.InputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.util.concurrent.Executors;
-import nie.translator.rtranslator.downloader.ModelDownloadManifest;
 import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -75,8 +63,8 @@ public class DownloadFragment extends Fragment {
     private TextView progressDescriptionText;
     private TextView progressNumbersText;
     private TextView sourceStatusText;
-    private final ActivityResultLauncher<String[]> modelFilePicker = registerForActivityResult(
-            new ActivityResultContracts.OpenDocument(), this::importSelectedModel);
+    private final nie.translator.rtranslator.downloader.ModelFileImporter modelFilePicker =
+            new nie.translator.rtranslator.downloader.ModelFileImporter(this);
     private final Runnable sourceStatusRefresh = new Runnable() {
         @Override public void run() {
             if (sourceStatusText != null) sourceStatusText.setText(ModelDownloadLog.summary());
@@ -116,7 +104,10 @@ public class DownloadFragment extends Fragment {
         progressNumbersText = view.findViewById(R.id.progress_numbers);
         sourceStatusText = view.findViewById(R.id.download_source_status);
         Button importButton = view.findViewById(R.id.import_model_button);
-        importButton.setOnClickListener(v -> modelFilePicker.launch(new String[]{"application/octet-stream", "application/zip", "*/*"}));
+        importButton.setOnClickListener(v -> {
+            if (downloader != null) downloader.pauseAllDownloads();
+            modelFilePicker.launch(() -> { if (downloader != null) startAllDownloads(); });
+        });
         Button logButton = view.findViewById(R.id.download_log_button);
         logButton.setOnClickListener(v -> new AlertDialog.Builder(requireContext())
                 .setTitle("模型下载日志")
@@ -292,62 +283,6 @@ public class DownloadFragment extends Fragment {
         storageWarningText.setVisibility(View.GONE);
     }
 
-
-    private void importSelectedModel(Uri uri) {
-        if (uri == null || getContext() == null) return;
-        String filename = null;
-        try (Cursor cursor = requireContext().getContentResolver().query(uri,
-                new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) filename = cursor.getString(0);
-        } catch (Exception ignored) { }
-        if (filename == null || filename.contains("/") || filename.contains("\\\\")
-                || filename.equals(".") || filename.equals("..")
-                || !filename.matches("[A-Za-z0-9_.-]+")) {
-            Toast.makeText(requireContext(), "文件名无效，请选择原始模型文件", Toast.LENGTH_LONG).show();
-            return;
-        }
-        final String selectedName = filename;
-        boolean supported = false;
-        if (DOWNLOAD_INFOS != null) for (DownloadInfo info : DOWNLOAD_INFOS) {
-            String url = info.getUrl();
-            if (url != null && url.endsWith("/" + selectedName)
-                    && ModelDownloadManifest.forUrl(url) != null) supported = true;
-        }
-        if (!supported) {
-            Toast.makeText(requireContext(), "不是当前下载任务需要的模型文件：" + selectedName, Toast.LENGTH_LONG).show();
-            return;
-        }
-        File dir = requireContext().getExternalFilesDir(null);
-        if (dir == null) {
-            Toast.makeText(requireContext(), "无法访问应用文件目录", Toast.LENGTH_LONG).show();
-            return;
-        }
-        final File destination = new File(dir, selectedName);
-        final android.content.ContentResolver resolver = requireContext().getContentResolver();
-        ModelDownloadLog.record("正在导入 " + selectedName, "local-file");
-        Executors.newSingleThreadExecutor().execute(() -> {
-            File tmp = new File(dir, selectedName + ".importing");
-            try (InputStream in = resolver.openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                if (in == null) throw new IOException("无法读取文件");
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-                out.getFD().sync();
-                if (!tmp.renameTo(destination)) throw new IOException("保存文件失败");
-                ModelDownloadLog.record("已保存 " + selectedName + "，请暂停并重新打开应用以导入校验", "local-file");
-                if (isAdded()) requireActivity().runOnUiThread(() ->
-                        new AlertDialog.Builder(requireContext()).setTitle("模型文件已导入")
-                                .setMessage(selectedName + " 已复制到应用目录。请退出并重新打开应用，系统将校验并复用该文件。")
-                                .setPositiveButton("确定", null).show());
-            } catch (Exception e) {
-                tmp.delete();
-                ModelDownloadLog.record("本地导入失败：" + e.getMessage(), "local-file");
-                if (isAdded()) requireActivity().runOnUiThread(() ->
-                        Toast.makeText(requireContext(), "导入失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
-            }
-        });
-    }
 
     private void showDownloadError(){
         //we show the download error and the retry button

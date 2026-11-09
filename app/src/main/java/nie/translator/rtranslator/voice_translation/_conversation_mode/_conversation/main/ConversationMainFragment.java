@@ -65,6 +65,16 @@ public class ConversationMainFragment extends VoiceTranslationFragment {
     private EditText editText;
     private ImageButton micPlaceHolder;
     private Handler mHandler = new Handler();
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener meetingPreferenceListener = (prefs, key) -> {
+        if (!isAdded() || microphone == null || sound == null) return;
+        if (nie.translator.rtranslator.voice_translation.live.MeetingPreferences.ENABLED.equals(key)
+                || nie.translator.rtranslator.voice_translation.live.MeetingPreferences.SEND_MIC.equals(key)) {
+            boolean meeting = nie.translator.rtranslator.voice_translation.live.MeetingPreferences.enabled(requireContext());
+            sound.setMute(meeting || !prefs.getBoolean("conversationAutoTTS", true));
+            if (meeting) microphone.setMute(!nie.translator.rtranslator.voice_translation.live.MeetingPreferences.sendsMic(requireContext()));
+            if (mAdapter != null) mAdapter.notifyDataSetChanged();
+        }
+    };
     //connection
     protected VoiceTranslationService.VoiceTranslationServiceCommunicator conversationServiceCommunicator;
     protected VoiceTranslationService.VoiceTranslationServiceCallback conversationServiceCallback;
@@ -246,6 +256,7 @@ public class ConversationMainFragment extends VoiceTranslationFragment {
     @Override
     public void onStart() {
         super.onStart();
+        nie.translator.rtranslator.voice_translation.live.MeetingPreferences.prefs(requireContext()).registerOnSharedPreferenceChangeListener(meetingPreferenceListener);
         if (getArguments() != null) {
             if (getArguments().getBoolean("firstStart", false)) {
                 getArguments().remove("firstStart");
@@ -366,6 +377,10 @@ public class ConversationMainFragment extends VoiceTranslationFragment {
     }
 
     protected void startSound() {
+        if (nie.translator.rtranslator.voice_translation.live.MeetingPreferences.enabled(requireContext())) {
+            android.widget.Toast.makeText(requireContext(), "Meeting: captions only / 会议中仅显示字幕", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         sound.setMute(false);
         conversationServiceCommunicator.startSound();
     }
@@ -411,6 +426,7 @@ public class ConversationMainFragment extends VoiceTranslationFragment {
 
     @Override
     public void onStop() {
+        nie.translator.rtranslator.voice_translation.live.MeetingPreferences.prefs(requireContext()).unregisterOnSharedPreferenceChangeListener(meetingPreferenceListener);
         super.onStop();
         mHandler.removeCallbacksAndMessages(null);
         activity.disconnectFromConversationService((ConversationService.ConversationServiceCommunicator) conversationServiceCommunicator);
