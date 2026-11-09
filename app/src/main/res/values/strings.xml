@@ -253,4 +253,5 @@
     <string name="cn_copy_log">Copy logs</string>
     <string name="cn_import_completed">Local model files imported</string>
     <string name="cn_import_failed">Model import failed; see logs</string>
+    <string name="cn_parallelism_choose">Parallel download speed</string>
 </resources>
