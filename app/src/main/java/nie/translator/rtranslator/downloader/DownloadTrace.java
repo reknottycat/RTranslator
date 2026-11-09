@@ -54,6 +54,15 @@ public final class DownloadTrace {
         }
     }
 
+    public static synchronized void blockTrying(String sourceName, int index, int count,
+                                                int attempt, int maxAttempts) {
+        source = sourceName;
+        phase = "4 MiB 分块并发 · 分块 " + index + "/" + count
+                + " · 第 " + attempt + "/" + maxAttempts + " 次";
+        record("请求分块 " + index + "/" + count + "，来源：" + sourceName
+                + "；尝试 " + attempt + "/" + maxAttempts);
+    }
+
     public static synchronized void transferred(long current, long expected) {
         bytes = current;
         if (expected > 0) total = expected;
