@@ -87,6 +87,16 @@ public final class ModelDownloadManifest {
         return ENTRIES.get(canonicalUrl);
     }
 
+    /** Exact, allowlisted filenames only; never trust the file-picker display name as a path. */
+    public static Entry forFilename(String filename) {
+        if (filename == null || filename.isEmpty() || filename.contains("/")
+                || filename.contains("\\\\") || filename.contains("..")) return null;
+        for (Map.Entry<String, Entry> entry : ENTRIES.entrySet()) {
+            if (entry.getKey().endsWith("/" + filename)) return entry.getValue();
+        }
+        return null;
+    }
+
     public static Map<String, Entry> entries() {
         return Collections.unmodifiableMap(ENTRIES);
     }
