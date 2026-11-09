@@ -18,6 +18,9 @@
 
 apply plugin: 'com.android.application'
 
+// Opt-in fork package so the test APK can coexist with the upstream app.
+def cnBuild = project.findProperty('cnBuild') == 'true'
+
 ext {
     supportLibraryVersion = '1.0.0'
     grpcVersion = '1.11.0'
@@ -29,10 +32,19 @@ android {
     ndkVersion "28.0.12674087"
     defaultConfig {
         applicationId "nie.translator.rtranslator"
+        manifestPlaceholders = [appLabel: cnBuild ? 'RTranslator CN' : '@string/app_name']
         targetSdkVersion 36   //32
         compileSdk 36
         versionName '3.0.0-beta2'
         versionCode 27
+        if (cnBuild) {
+            applicationIdSuffix '.cn'
+            versionNameSuffix '-cn.1'
+            versionCode 28
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
+        }
         minSdkVersion 28
         externalNativeBuild {
             cmake {
@@ -61,6 +73,12 @@ android {
                         '-DCMAKE_CXX_FLAGS="-Wno-enum-constexpr-conversion"'
                 cppFlags '-std=c++17'
                 abiFilters 'arm64-v8a'
+                if (cnBuild) {
+                    // Gradle's worker limit does not cap Ninja's native jobs.
+                    arguments '-DCMAKE_JOB_POOLS=compile_pool=2;link_pool=1',
+                            '-DCMAKE_JOB_POOL_COMPILE=compile_pool',
+                            '-DCMAKE_JOB_POOL_LINK=link_pool'
+                }
             }
         }
     }
@@ -165,6 +183,7 @@ dependencies {
     testImplementation "androidx.room:room-testing:$room_version"
     // Tests
     testImplementation 'junit:junit:4.12'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     androidTestImplementation 'androidx.test:runner:1.2.0'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
 }

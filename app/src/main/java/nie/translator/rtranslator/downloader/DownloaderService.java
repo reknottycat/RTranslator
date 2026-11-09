@@ -55,6 +55,9 @@ public class DownloaderService extends Service {
         super.onCreate();
         PRDownloaderConfig config = PRDownloaderConfig.newBuilder()
                 .setDatabaseEnabled(true)
+                .setHttpClient(new FallbackHttpClient())
+                .setConnectTimeout(FallbackHttpClient.CONNECT_TIMEOUT_MS)
+                .setReadTimeout(FallbackHttpClient.READ_TIMEOUT_MS)
                 .build();
         PRDownloader.initialize(getApplicationContext(), config);
         downloaderCallback = new Downloader.ClientCallback() {
