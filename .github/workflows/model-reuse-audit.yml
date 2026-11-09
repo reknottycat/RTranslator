@@ -1,0 +1,32 @@
+name: Model reuse regression audit
+on:
+  push:
+    branches: [fix/meeting-model-reuse]
+    paths: ['.github/workflows/model-reuse-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Capture both exact released source trees
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin 30e90747eaa9628b5a74a84a20210f28945787f5 cc37a0d6dd3a1d005e1081772cccded7c4ef2756
+          mkdir -p audit
+          git archive --format=zip 30e90747eaa9628b5a74a84a20210f28945787f5 -o audit/meeting-source.zip
+          git archive --format=zip cc37a0d6dd3a1d005e1081772cccded7c4ef2756 -o audit/working-modelscope-source.zip
+          git diff --stat 30e90747eaa9628b5a74a84a20210f28945787f5 cc37a0d6dd3a1d005e1081772cccded7c4ef2756 > audit/source-differences.txt
+          sha256sum audit/*.zip > audit/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-reuse-source-audit
+          path: audit/
+          retention-days: 7
+          if-no-files-found: error
