@@ -1,0 +1,149 @@
+name: Conversation APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/solo-meeting-conversation]
+    paths:
+      - '.ci/live-feature.part*'
+      - '.github/workflows/conversation-build.yml'
+permissions:
+  contents: read
+concurrency:
+  group: conversation-apk-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'reknottycat/RTranslator' && github.ref == 'refs/heads/feat/solo-meeting-conversation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Apply checksum-pinned conversation source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f .ci/live-feature.part0; then
+            python3 - <<'PY'
+          import hashlib, lzma, pathlib
+          packed = b''.join(pathlib.Path(f'.ci/live-feature.part{i}').read_bytes() for i in range(3))
+          patch = lzma.decompress(packed)
+          assert hashlib.sha256(patch).hexdigest() == '72c87c63a5bd3a57fcb9f05c3fe0e29025145c620f1d05f9e911eab81736eb9e', 'Source patch mismatch'
+          pathlib.Path('/tmp/conversation.patch').write_bytes(patch)
+          PY
+            git apply --check /tmp/conversation.patch
+            git apply /tmp/conversation.patch
+          fi
+          git diff --check
+      - name: Install pinned Android toolchain
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - uses: actions/cache@v4
+        with:
+          path: app/.cxx
+          key: conversation-native-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**', 'app/build.gradle', '.gitmodules') }}
+      - name: Unit tests, lint and full native ARM64 build
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./gradlew --no-daemon --max-workers=2 -PconversationBuild=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee conversation-build.log
+      - name: Verify test counts and new-component lint
+        run: |
+          python3 - <<'PY'
+          import glob, pathlib, xml.etree.ElementTree as ET
+          suites = [ET.parse(p).getroot() for p in glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml')]
+          assert suites, 'No tests found'
+          totals = {k: sum(int(s.get(k, '0')) for s in suites) for k in ['tests', 'failures', 'errors', 'skipped']}
+          assert totals['failures'] == totals['errors'] == 0, totals
+          assert totals['tests'] >= 42, totals
+          lint = ET.parse('app/build/reports/lint-results-debug.xml').getroot()
+          errors = [i for i in lint.findall('issue') if i.get('severity') in ['Error', 'Fatal']]
+          new = [i for i in errors if any('/voice_translation/live/' in loc.get('file', '') or loc.get('file','').endswith('/ModelFileImporter.java') for loc in i.findall('location'))]
+          for issue in new: print(ET.tostring(issue).decode())
+          assert not new, 'Lint errors in new components'
+          pathlib.Path('app/build/verification').mkdir(parents=True, exist_ok=True)
+          pathlib.Path('app/build/verification/test-summary.txt').write_text(str(totals) + '\nTotal lint errors (including upstream): ' + str(len(errors)) + '\nNew-component lint errors: 0\n')
+          print(totals)
+          PY
+      - name: Verify APK identity and signatures
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$APK" > app/build/verification/apk-signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" > app/build/verification/apk-badging.txt
+          grep "package: name='nie.translator.rtranslator.cn.meeting'" app/build/verification/apk-badging.txt
+          grep "versionName='3.0.0-beta2-cn.2-meeting.1'" app/build/verification/apk-badging.txt
+          cp "$APK" RTranslator-3.0.0-beta2-cn.2-meeting.1-arm64.apk
+          sha256sum RTranslator-3.0.0-beta2-cn.2-meeting.1-arm64.apk > SHA256SUMS
+          git submodule status --recursive > app/build/verification/submodules.txt
+      - name: Preserve validated source on feature branch only
+        run: |
+          set -euo pipefail
+          if test -f .ci/live-feature.part0; then
+            git rm .ci/live-feature.part0 .ci/live-feature.part1 .ci/live-feature.part2
+            git add app docs
+            git diff --cached --check
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: add single-device captions, Bluetooth meeting controls and verified model import'
+            git push origin HEAD:refs/heads/feat/solo-meeting-conversation
+          fi
+          git rev-parse HEAD > app/build/verification/source-commit.txt
+          cp SHA256SUMS app/build/verification/SHA256SUMS
+          git archive --format=zip HEAD -o conversation-verified-source.zip
+      - name: Publish public test APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=cn-v3.0.0-beta2-meeting.1
+          SOURCE=$(cat app/build/verification/source-commit.txt)
+          cat > release-notes.md <<'NOTES'
+          Unofficial RTranslator CN Meeting **test build**, ARM64 / Android 9+.
+
+          - Single-device bilingual captions with Auto / language A / language B. Auto is restricted to the selected language pair.
+          - Continuous microphone capture, VAD-based short segments, bounded processing queue and visible states. This is segmented transcription, not word-by-word streaming or speaker diarization.
+          - Optional limited software microphone gain; no claim of beamforming or real-world far-field accuracy.
+          - Bluetooth meeting mode: caption-first, no automatic TTS, explicit microphone opt-in, separate speaking and receiving languages.
+          - Uses existing direct-peer Bluetooth broadcast. Three/four-device operation is experimental and requires mutual direct connections; no relay is implemented.
+          - Model source logs and verified Android file-picker import are included. No mainland-only hosting service has been deployed.
+
+          Package: `nie.translator.rtranslator.cn.meeting`. Installs alongside the official and earlier CN apps. Model storage is separate; import the original model files again.
+          Debug-signed test build. Signing keys may differ between builds; do not uninstall an existing app without backing up its data.
+          No physical-device audio, 30-minute meeting, or multi-device acceptance test has been completed.
+          NOTES
+          printf '\nValidated source: `%s`\n\n' "$SOURCE" >> release-notes.md
+          cat app/build/verification/test-summary.txt >> release-notes.md
+          printf '\n' >> release-notes.md
+          cat SHA256SUMS >> release-notes.md
+          zip -jr conversation-verification.zip app/build/verification
+          gh release create "$TAG" RTranslator-3.0.0-beta2-cn.2-meeting.1-arm64.apk SHA256SUMS conversation-verification.zip conversation-verified-source.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE" \
+            --title 'RTranslator CN Meeting beta2 — single-device and Bluetooth captions (test)' \
+            --notes-file release-notes.md --prerelease --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conversation-build-evidence
+          path: |
+            conversation-build.log
+            app/build/reports/
+            app/build/test-results/
+            app/build/verification/
+            RTranslator-3.0.0-beta2-cn.2-meeting.1-arm64.apk
+            SHA256SUMS
+          retention-days: 30
+          if-no-files-found: warn
