@@ -74,3 +74,17 @@ Whisper 文件保留原 `.onnx` 文件名。翻译模型使用原始 `HY-MT.zip`
 - [beta2 新模型资源元数据](https://api.github.com/repos/niedev/OnnxModelsEnhancer/releases/tags/v1.0.0-beta)
 - [GH-Proxy 使用文档](https://gh-proxy.com/docs/github-accelerator)
 - [imciel 代理说明](https://ghproxy.imciel.com/)
+
+
+## 2026-11-09: CN beta2.2 manual file import and source diagnosis
+
+On the initial model-download screen:
+
+- **从手机文件导入模型** opens Android's system document picker (multiple files). Choose unmodified model assets with their original filenames, such as `Whisper_cache_initializer.onnx`, `HY-MT.zip`, `Madlad.zip` or `Mozilla_zh.zip`. The files are validated against the exact official release size and SHA-256 where available, staged atomically, and then recognized by the existing download manager; do **not** rename or unzip them.
+- **切换下载源** has three modes: **国内镜像优先** (default), **GitHub 官方优先**, or **仅使用加速镜像**. The downloader displays the current provider, file name, connection state, real transferred bytes, and failure/fallback diagnostics. **查看日志** expands chronological events; **复制日志** makes it easy to send a failure report.
+- The CN priority order is `ghfast.top`, `ghproxy.net`, `gh-proxy.org`, `ghproxy.imciel.com`, then the original GitHub asset. These are third-party GitHub proxy endpoints, not official Chinese domestic copies of the models. Reachability, range support, throughput and availability vary by ISP and asset size. This version uses the existing PRDownloader transport, not a separate download engine.
+- Opening the picker pauses the downloader. After selecting or cancelling, the existing download manager resumes; successful picker imports are reused before any network fetch. Invalid file names, sizes and hashes are rejected and recorded in the log.
+- When a proxy supplies a chunked full-file HTTP 200 without Content-Length, the fixed official model size is used as the upper bound and expected final length; official SHA-256 is still checked for assets that publish it.
+- The GitHub Actions APK is debug-signed on a fresh runner and **may not be signature-compatible** with beta2-cn.1. Back up data/models and uninstall the previous CN build before installing beta2-cn.2 if Android reports a signature conflict. This is a test build, not a production signing setup.
+
+For a model download that stays at 0 bytes, open the log and look for `尝试来源` and `下载来源失败` entries. Copy the log without exposing device credentials.
