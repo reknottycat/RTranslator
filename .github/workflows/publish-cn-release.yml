@@ -1,0 +1,64 @@
+name: Publish verified CN beta2 APK
+
+on:
+  push:
+    branches:
+      - ops/publish-cn-apk-release
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'reknottycat/RTranslator'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download the successful APK build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist release
+          gh run download 42626247096 --repo "$GH_REPO" --name "RTranslator-3.0.0-beta2-cn-arm64" --dir dist
+          APK="$(find dist -type f -name '*.apk' -print -quit)"
+          test -n "$APK" && test -s "$APK"
+          SOURCE_FILE="$(find dist -type f -name 'source-commit.txt' -print -quit)"
+          test -n "$SOURCE_FILE" && test -s "$SOURCE_FILE"
+          test "$(tr -d '\r\n' < "$SOURCE_FILE")" = "2762c6185f9f8ff7dcf97943a25e688377c8d4ef"
+          CHECKSUM_FILE="$(find dist -type f -name SHA256SUMS -print -quit)"
+          test -n "$CHECKSUM_FILE" && test -s "$CHECKSUM_FILE"
+          ACTUAL="$(sha256sum "$APK" | cut -d ' ' -f 1)"
+          EXPECTED="$(cut -d ' ' -f 1 < "$CHECKSUM_FILE")"
+          test "$ACTUAL" = "$EXPECTED"
+          cp "$APK" release/RTranslator-3.0.0-beta2-cn.1-arm64.apk
+          (cd release && sha256sum RTranslator-3.0.0-beta2-cn.1-arm64.apk > SHA256SUMS)
+          ls -lh release/*
+      - name: Publish public GitHub Release with standalone APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          Unofficial RTranslator 3.0.0-beta2 CN test build for ARM64 Android devices (Android 9 / API 28 or newer).
+
+          - Adds fallback mirrors for downloading the same official model assets when the official GitHub URL cannot be reached.
+          - Supports loading correctly named, complete beta2-compatible model files copied into the app-specific external-files directory.
+          - Uses the existing PRDownloader; does not introduce a separate downloader or multithreaded download engine.
+          - Uses separate app ID `nie.translator.rtranslator.cn` so it can coexist with the official application.
+          - This is an APK built by GitHub Actions from source commit `2762c6185f9f8ff7dcf97943a25e688377c8d4ef`, from the 3.0.0-beta2 upstream tag, not an official upstream release.
+
+          Important: this APK is DEBUG-signed with a CI runner key, not a stable production signing key. Do not assume it can update an APK signed elsewhere. Android will require uninstalling a differently signed app (which can delete app data). Real-device China-network model download behavior has not been verified yet.
+
+          SHA256SUMS is included for checking the download.
+          NOTES
+          gh release create "v3.0.0-beta2-cn.1" release/RTranslator-3.0.0-beta2-cn.1-arm64.apk release/SHA256SUMS \
+            --repo "$GH_REPO" \
+            --target 2762c6185f9f8ff7dcf97943a25e688377c8d4ef \
+            --title "RTranslator 3.0.0-beta2 CN 1 (arm64)" \
+            --notes-file release-notes.md \
+            --prerelease
+          gh release view "v3.0.0-beta2-cn.1" --repo "$GH_REPO" --json url,assets,tagName
