@@ -1,0 +1,79 @@
+{
+  "checked_at": "2026-11-09T16:18:21.792950+00:00",
+  "source_commit": "cc37a0d6dd3a1d005e1081772cccded7c4ef2756",
+  "build_run": 42651124849,
+  "public_release_url": "https://github.com/reknottycat/RTranslator/releases/tag/cn-v3.0.0-beta2.3-ms-cc37a0d6",
+  "public_apk_url": "https://github.com/reknottycat/RTranslator/releases/download/cn-v3.0.0-beta2.3-ms-cc37a0d6/RTranslator-3.0.0-beta2-cn.3-modelscope-arm64.apk",
+  "anonymous_download_status": 200,
+  "size_bytes": 211062181,
+  "sha256": "3c53cc8cfa354e19052fe5123650d758821412258f6ebf18629d7e4a7e9dcd82",
+  "release_bytes_identical_to_tested_build": true,
+  "junit": {
+    "tests": 46,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "suite": "nie.translator.rtranslator.downloader.FallbackHttpClientTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.downloader.LocalModelFilesTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.downloader.ChunkedModelDownloaderTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.ExampleUnitTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.downloader.PickedModelStageTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.downloader.ChunkedTransportIntegrationTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "nie.translator.rtranslator.downloader.PrDownloaderTransportTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "lint": [
+    {
+      "errors": 36,
+      "warnings": 275
+    }
+  ],
+  "limitations": [
+    "No physical Android device acceptance test",
+    "Cloud network does not establish mainland carrier speed",
+    "Debug signature may differ from prior CI builds"
+  ]
+}
