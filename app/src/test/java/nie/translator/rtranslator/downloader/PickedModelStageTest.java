@@ -70,6 +70,6 @@ public class PickedModelStageTest {
     @Test public void mirrorListPreservesOfficialCanonicalAsset() {
         String url = "https://github.com/niedev/RTranslator/releases/download/2.0.0/Whisper_cache_initializer.onnx";
         assertTrue(DownloadSourceOrder.candidates(url).stream().anyMatch(url::equals));
-        assertTrue(DownloadSourceOrder.candidates(url).get(0).startsWith("https://ghfast.top/"));
+        assertTrue(DownloadSourceOrder.candidates(url).get(0).startsWith("https://gh-proxy.org/"));
     }
 }
