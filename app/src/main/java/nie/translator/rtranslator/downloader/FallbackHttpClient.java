@@ -112,6 +112,16 @@ public final class FallbackHttpClient implements HttpClient {
                         new File(request.getDirPath()), startOffset, total);
                 stream = segmentedStream;
                 DownloadTrace.state("启用并发分块下载：" + request.getFileName());
+            } else if (sources == MODEL_SOURCES && metadata != null
+                    && total - startOffset >= ParallelChunkStream.CHUNK_SIZE * 2L) {
+                try {
+                    stream = new ParallelChunkStream(new File(request.getDirPath()),
+                            request.getUrl(), candidates, startOffset, total);
+                } catch (IOException parallelUnavailable) {
+                    DownloadTrace.failed("分块下载", parallelUnavailable.getMessage());
+                    stream = null;
+                    openNextSource();
+                }
             } else {
                 openNextSource();
             }
