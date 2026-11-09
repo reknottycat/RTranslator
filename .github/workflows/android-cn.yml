@@ -48,7 +48,7 @@ jobs:
       - name: Upload installable test APK
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-beta2-cn-arm64
+          name: RTranslator-3.0.0-beta2-cn.2-arm64
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/verification/
