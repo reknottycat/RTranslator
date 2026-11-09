@@ -213,8 +213,9 @@ public final class ChunkedModelDownloader {
                     : (chunkIndex + attempt) % sources.size();
             String candidate = sources.get(endpointIndex);
             String label = DownloadSourceOrder.label(candidate);
-            DownloadTrace.trying(label, staging.getName(), attempt + 1,
-                    MAX_TRIES_PER_CHUNK, start, total);
+            DownloadTrace.blockTrying(label, chunkIndex + 1,
+                    (int) ((total + CHUNK_BYTES - 1) / CHUNK_BYTES),
+                    attempt + 1, MAX_TRIES_PER_CHUNK);
             try {
                 fetchRange(candidate, staging, start, end, total);
                 DownloadTrace.record("完成第 " + (chunkIndex + 1) + " 块 · " + label);
