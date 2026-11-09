@@ -1,19 +1,15 @@
 name: Android CN APK
-
 on:
   workflow_dispatch:
   push:
-    branches: [feat/cn-download-fallback-beta2, feat/cn-model-import-source-log-v2]
+    branches: [feat/cn-download-fallback-beta2]
   pull_request:
     branches: [development, v3.00]
-
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
   group: android-cn-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -28,15 +24,12 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
         with:
-          # The retired `tools` package is no longer in the SDK repository.
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install pinned Android tools
-        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
-      - name: Test, inspect and build the fork APK
-        run: bash ./gradlew --no-daemon --max-workers=2 -PcnBuild=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
-      - name: Verify the APK and record source identity
+      - run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - run: bash ./gradlew --no-daemon --max-workers=2 -PcnBuild=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Verify APK
         run: |
           mkdir -p app/build/verification
           APK=app/build/outputs/apk/debug/app-debug.apk
@@ -44,61 +37,16 @@ jobs:
           "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" > app/build/verification/apk-badging.txt
           sha256sum "$APK" > app/build/verification/SHA256SUMS
           git rev-parse HEAD > app/build/verification/source-commit.txt
-          git submodule status --recursive > app/build/verification/submodules.txt
-      - name: Upload installable test APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-beta2-cn-arm64
+          name: RTranslator-CN-arm64
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/verification/
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish CN beta2.2 APK to public GitHub Releases
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/cn-model-import-source-log-v2' && github.repository == 'reknottycat/RTranslator'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p app/build/release
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/release/RTranslator-3.0.0-beta2-cn.2-arm64.apk
-          cd app/build/release
-          sha256sum RTranslator-3.0.0-beta2-cn.2-arm64.apk | tee SHA256SUMS
-          cat > notes.md <<'NOTES'
-          Unofficial RTranslator 3.0.0-beta2 China-friendly **test build**, version cn.2.
-
-          - First-run page: Android file picker can import multiple original model files.
-          - Live download source and status; expand/copy a detailed failure log.
-          - Change source order: China-oriented mirrors first (default), official first, or mirrors only.
-          - Keeps the original PRDownloader, validates exact official asset sizes and available SHA-256 digests.
-          - ARM64, Android 9+, app ID nie.translator.rtranslator.cn, coexists with official RTranslator.
-          - Public GitHub proxy services are not guaranteed to work on all mainland-China networks.
-          - A new CI **debug** signature may prevent in-place upgrades from cn.1. Back up files and uninstall cn.1 if Android reports a signing mismatch.
-          - No full multi-GB real-device acceptance test yet; report failures via the on-screen source log.
-
-          Source: https://github.com/reknottycat/RTranslator/tree/feat/cn-model-import-source-log-v2
-          NOTES
-          printf '\nAPK SHA-256:\n' >> notes.md
-          cat SHA256SUMS >> notes.md
-          TAG="cn-v3.0.0-beta2.2"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "RTranslator-3.0.0-beta2-cn.2-arm64.apk" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$TAG" "RTranslator-3.0.0-beta2-cn.2-arm64.apk" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "RTranslator 3.0.0-beta2 CN v2 · model import and source logs" \
-              --notes-file notes.md --prerelease
-          fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
-      - name: Upload test and lint evidence
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: Android-test-reports
           path: |
             app/build/reports/
             app/build/test-results/
-          if-no-files-found: warn
-          retention-days: 30

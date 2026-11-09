@@ -1,0 +1,23 @@
+name: Audit exact model sources
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/cn-model-import-source-log-v2]
+    paths: ['tools/audit_model_sources.py', '.github/workflows/model-source-audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install requests
+      - name: Search catalogs and verify byte ranges against official assets
+        run: python tools/audit_model_sources.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-model-source-audit
+          path: source-audit.json
+          if-no-files-found: error
