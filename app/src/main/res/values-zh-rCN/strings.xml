@@ -224,5 +224,13 @@
     <string name="walkietalkie_mode" >对讲机模式</string>
     <string name="walkietalkie_mode_running" >对讲机模式正在运行...</string>
 
+    <string name="cn_import_models">从手机文件导入模型</string>
+    <string name="cn_source_pending">等待下载来源连接…</string>
+    <string name="cn_source_choose">切换下载源</string>
+    <string name="cn_show_log">查看日志</string>
+    <string name="cn_hide_log">收起日志</string>
+    <string name="cn_copy_log">复制日志</string>
+    <string name="cn_import_completed">模型文件导入成功</string>
+    <string name="cn_import_failed">模型导入失败，请查看日志</string>
 </resources>
 
