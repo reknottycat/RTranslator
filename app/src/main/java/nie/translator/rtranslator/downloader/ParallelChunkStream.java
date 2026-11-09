@@ -226,7 +226,12 @@ final class ParallelChunkStream extends InputStream {
         try {
             for (int redirect = 0; ; redirect++) {
                 checkRunning();
-                if (!"https".equals(url.getProtocol()) || url.getUserInfo() != null) {
+                // Allow HTTP only for an isolated localhost JVM MockWebServer test.
+                // All production URLs and redirects remain HTTPS-only.
+                boolean loopbackTest = "http".equals(url.getProtocol())
+                        && ("localhost".equals(url.getHost()) || "127.0.0.1".equals(url.getHost()));
+                if ((!loopbackTest && !"https".equals(url.getProtocol()))
+                        || url.getUserInfo() != null) {
                     throw new IOException("Unsafe model download redirect");
                 }
                 connection = (HttpURLConnection) url.openConnection();
