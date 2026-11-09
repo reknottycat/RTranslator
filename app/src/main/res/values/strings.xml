@@ -245,4 +245,12 @@
     <string name="walkietalkie_mode" >WalkieTalkie</string>
     <string name="walkietalkie_mode_running" >WalkieTalkie mode is running...</string>
 
+    <string name="cn_import_models">Import model files from phone</string>
+    <string name="cn_source_pending">Waiting for download source...</string>
+    <string name="cn_source_choose">Choose source</string>
+    <string name="cn_show_log">Show logs</string>
+    <string name="cn_hide_log">Hide logs</string>
+    <string name="cn_copy_log">Copy logs</string>
+    <string name="cn_import_completed">Local model files imported</string>
+    <string name="cn_import_failed">Model import failed; see logs</string>
 </resources>
