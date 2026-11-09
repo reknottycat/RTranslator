@@ -1,0 +1,24 @@
+name: Single device conversation
+on:
+  push:
+    branches: [feat/single-device-conversation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: single-device-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive --format=zip --output=source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: single-device-source
+          path: source.zip
+          retention-days: 7
