@@ -2,7 +2,7 @@ name: Audit exact model sources
 on:
   workflow_dispatch:
   push:
-    branches: [feat/cn-model-import-source-log-v2]
+    branches: [chore/model-source-audit]
     paths: ['tools/audit_model_sources.py', '.github/workflows/model-source-audit.yml']
 permissions:
   contents: read
