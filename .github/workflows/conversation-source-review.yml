@@ -1,0 +1,27 @@
+name: Conversation source review
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/solo-meeting-conversation]
+    paths: [.github/workflows/conversation-source-review.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact source without credentials or build outputs
+        run: |
+          git archive --format=zip HEAD -o conversation-source.zip
+          git rev-parse HEAD > source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conversation-source-review
+          path: |
+            conversation-source.zip
+            source-commit.txt
+          retention-days: 7
