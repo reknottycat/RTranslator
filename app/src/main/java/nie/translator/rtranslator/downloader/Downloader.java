@@ -218,6 +218,7 @@ public class Downloader {
         }
         ModelDownloadManifest.Entry entry = ModelDownloadManifest.forUrl(info.getUrl());
         if (!localFileChecked[index] && entry != null) {
+            DownloadTrace.state("检查可导入的本地模型：" + info.getName());
             localFileChecked[index] = true;
             final long attempt = generation;
             importThread = new Thread(() -> {
@@ -238,11 +239,15 @@ public class Downloader {
                     if (importThread == finished) importThread = null;
                     if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
                     if (error != null) {
+                        DownloadTrace.state("本地模型导入失败：" + info.getName()
+                                + "；" + error.getMessage());
                         failDownload(index, GENERAL_ERROR);
                     } else if (imported) {
+                        DownloadTrace.state("已从本地导入模型：" + info.getName());
                         importedLocally[index] = true;
                         onFileDownloaded(index);
                     } else {
+                        DownloadTrace.record("本地未找到有效文件，开始联网下载：" + info.getName());
                         startNetworkDownload(index);
                     }
                 });
@@ -309,6 +314,7 @@ public class Downloader {
         // canonical ID/DB checkpoint and fresh callbacks, rather than reusing stale listeners.
         final long attempt = generation;
         networkActive = true;
+        DownloadTrace.record("发起下载：" + downloadGroupInfo.downloadsInfo[index].getName());
         //start the download from scratch or resume it after the app has been restarted
         downloadId = PRDownloader.download(downloadGroupInfo.downloadsInfo[index].getUrl(), downloadGroupInfo.downloadsInfo[index].getDestinationPath(), downloadGroupInfo.downloadsInfo[index].getName())
                 .build()
@@ -362,6 +368,8 @@ public class Downloader {
                         activeNetworkDownloadId = -1;
                         if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
                         Log.e("download error", (downloadGroupInfo.getRunningDownload() != null ? downloadGroupInfo.getRunningDownload().getName() : "") + "    " + error.toString());
+                        DownloadTrace.state("下载已停止：" + downloadGroupInfo.downloadsInfo[index].getName()
+                                + "；" + error.toString());
                         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
                         if(runningDownloadIndex != -1 && !downloadGroupInfo.getRunningDownload().isDownloadCompleted()) {
                             DownloadInfo download = downloadGroupInfo.downloadsInfo[runningDownloadIndex];
