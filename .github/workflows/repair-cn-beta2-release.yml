@@ -1,0 +1,46 @@
+name: Repair superseded CN beta2.2 release metadata
+
+on:
+  push:
+    branches: [chore/publish-cn-beta2-parallel]
+    paths: [.github/workflows/repair-cn-beta2-release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.repository == 'reknottycat/RTranslator'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Mark earlier beta2.2 release as superseded and correct its checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'EOF'
+          **Superseded release tag. Please use the distinct, verified parallel APK release:**
+
+          https://github.com/reknottycat/RTranslator/releases/tag/cn-v3.0.0-beta2.2-parallel.1
+
+          This earlier prerelease tag was originally created for the model-import/log preview.
+          During CI publication its APK asset was updated to the later parallel-download build.
+          Consequently the binary asset under this older tag is **not** built from the tag's original source commit.
+
+          To avoid ambiguous provenance, use the separate `cn-v3.0.0-beta2.2-parallel.1`
+          release instead. Both current APK assets have the same actual SHA-256:
+
+          `ea31ca5f85c7cb18f2ab27e445d2986051e26ede28060a941298d52a949ecfb7`
+
+          New APK source commit: `9b48b3ff56e57b385b53ff3812cb2c77a152b046`
+          Successful build: https://github.com/reknottycat/RTranslator/actions/runs/42649225236
+
+          This is an unofficial debug-signed Android 9+ ARM64 test build, not tested
+          end-to-end on a mainland-China device.
+          EOF
+          gh release edit cn-v3.0.0-beta2.2 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "RTranslator CN beta2.2 (superseded; see parallel release)" \
+            --notes-file notes.md
+          gh release view cn-v3.0.0-beta2.2 --repo "$GITHUB_REPOSITORY" --json title,url,body
