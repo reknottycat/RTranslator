@@ -90,7 +90,7 @@ public final class ModelDownloadManifest {
     /** Exact, allowlisted filenames only; never trust the file-picker display name as a path. */
     public static Entry forFilename(String filename) {
         if (filename == null || filename.isEmpty() || filename.contains("/")
-                || filename.contains("\\\\") || filename.contains("..")) return null;
+                || filename.indexOf((char) 92) >= 0 || filename.contains("..")) return null;
         for (Map.Entry<String, Entry> entry : ENTRIES.entrySet()) {
             if (entry.getKey().endsWith("/" + filename)) return entry.getValue();
         }
