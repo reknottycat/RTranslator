@@ -89,12 +89,19 @@ jobs:
               System.out.println(evidence);
             }
           }
+          EOF
           SRC=app/src/main/java/nie/translator/rtranslator/downloader
           javac -d host-check/classes $(find host-check/src -name '*.java') \
             "$SRC/ChunkedModelDownloader.java" "$SRC/DownloadSourceOrder.java" "$SRC/DownloadTrace.java" \
             "$SRC/ModelDownloadManifest.java" "$SRC/VerifiedModelMirrors.java"
-      - name: Run real 4 MiB/14-connection download, deliberate pause and resume
-        run: java -cp host-check/classes TransportCheck | tee host-check/transport.log
+          test -s host-check/classes/TransportCheck.class
+      - name: Real download and resume must produce a PASS report
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp host-check/classes TransportCheck 2>&1 | tee host-check/transport.log
+          test -s host-check/result.txt
+          grep -x 'result=PASS' host-check/result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
