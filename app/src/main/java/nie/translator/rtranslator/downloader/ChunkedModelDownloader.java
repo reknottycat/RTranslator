@@ -43,6 +43,16 @@ public final class ChunkedModelDownloader {
     private static final Pattern RANGE = Pattern.compile("bytes (\\d+)-(\\d+)/(\\d+)");
     private static final String CHECKPOINT_VERSION = "rtranslator-cn-chunks-v1";
     private final Object checkpointLock = new Object();
+    private static final java.util.concurrent.Semaphore CONNECTIONS = new java.util.concurrent.Semaphore(28, true);
+    interface SourceProvider { List<String> candidates(String canonical); }
+    private final SourceProvider sourceProvider;
+    private final boolean loopbackTest;
+    public ChunkedModelDownloader() { this(DownloadSourceOrder::candidates, false); }
+    // Test-only injection permits HTTP exclusively on loopback. Production requires HTTPS.
+    ChunkedModelDownloader(SourceProvider provider, boolean loopbackTest) {
+        this.sourceProvider = provider;
+        this.loopbackTest = loopbackTest;
+    }
 
     public interface Progress {
         void onProgress(long completeBytes, long totalBytes);
@@ -68,13 +78,15 @@ public final class ChunkedModelDownloader {
             sizeFile.setLength(entry.sizeBytes);
         }
         final BitSet completed = done;
-        final List<String> sources = DownloadSourceOrder.candidates(canonicalUrl);
+        final List<String> sources = sourceProvider.candidates(canonicalUrl);
         if (sources.isEmpty()) throw new IOException("No model download sources");
         AtomicInteger index = new AtomicInteger(0);
         AtomicLong completedBytes = new AtomicLong(countDoneBytes(done, entry.sizeBytes, count));
         int threads = Math.min(workers, count);
         DownloadTrace.state("4 MiB 分块下载 · " + threads + " 路并发 · "
                 + done.cardinality() + "/" + count + " 块已保存");
+        DownloadTrace.trying(DownloadSourceOrder.label(sources.get(0)), destination.getName(),
+                1, sources.size(), completedBytes.get(), entry.sizeBytes);
         DownloadTrace.transferred(completedBytes.get(), entry.sizeBytes);
         callback.onProgress(completedBytes.get(), entry.sizeBytes);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -88,7 +100,7 @@ public final class ChunkedModelDownloader {
                                 new InterruptedIOException("Download paused"));
                         int chunkIndex = index.getAndIncrement();
                         if (chunkIndex >= count) return;
-                        if (completed.get(chunkIndex)) continue;
+                        synchronized (checkpointLock) { if (completed.get(chunkIndex)) continue; }
                         long begin = ((long) chunkIndex) * CHUNK_BYTES;
                         long end = Math.min(entry.sizeBytes - 1, begin + CHUNK_BYTES - 1);
                         try {
@@ -154,10 +166,24 @@ public final class ChunkedModelDownloader {
     private BitSet readCheckpoint(File checkpoint, File staging, String url,
                                   ModelDownloadManifest.Entry metadata, int count) throws IOException {
         BitSet completed = new BitSet(count);
-        if (!checkpoint.exists() || !staging.exists()
-                || staging.length() != metadata.sizeBytes) return completed;
-        String[] lines = new String(Files.readAllBytes(checkpoint.toPath()),
-                java.nio.charset.StandardCharsets.UTF_8).split("\\n");
+        if (!checkpoint.exists() || !staging.exists() || staging.length() != metadata.sizeBytes) {
+            // A journal cannot describe a missing/truncated staging file.
+            Files.deleteIfExists(checkpoint.toPath());
+            return completed;
+        }
+        byte[] journalBytes = Files.readAllBytes(checkpoint.toPath());
+        String journalText = new String(journalBytes, java.nio.charset.StandardCharsets.UTF_8);
+        if (!journalText.endsWith("\n")) {
+            // A partial numeric record (e.g. "12" cut to "1") is not a completed chunk.
+            // Remove it before future appends, otherwise records could concatenate.
+            int end = journalText.lastIndexOf('\n') + 1;
+            journalText = journalText.substring(0, end);
+            try (RandomAccessFile journal = new RandomAccessFile(checkpoint, "rw")) {
+                journal.setLength(end); // Journal format is strictly ASCII.
+                journal.getFD().sync();
+            }
+        }
+        String[] lines = journalText.split("\\n");
         String expectedHeader = header(url, metadata);
         if (lines.length == 0 || !expectedHeader.equals(lines[0])) {
             // A new official asset or changed transfer format must never reuse prior chunks.
@@ -201,30 +227,36 @@ public final class ChunkedModelDownloader {
         return bytes;
     }
 
-    private static void getChunk(File staging, List<String> sources, int chunkIndex,
+    private void getChunk(File staging, List<String> sources, int chunkIndex,
                                  long start, long end, long total) throws IOException {
         IOException last = null;
         for (int attempt = 0; attempt < MAX_TRIES_PER_CHUNK; attempt++) {
             checkInterrupted();
-            // Spread workers across candidates and rotate on errors.
-            int firstPool = DownloadSourceOrder.get() == DownloadSourceOrder.OFFICIAL_FIRST
-                    ? 1 : Math.min(sources.size(), 3);
-            int endpointIndex = attempt == 0 ? chunkIndex % firstPool
-                    : (chunkIndex + attempt) % sources.size();
-            String candidate = sources.get(endpointIndex);
+            // Every chunk respects ModelScope-first; rotate only after a real failure.
+            String candidate = sources.get(attempt % sources.size());
             String label = DownloadSourceOrder.label(candidate);
             DownloadTrace.blockTrying(label, chunkIndex + 1,
                     (int) ((total + CHUNK_BYTES - 1) / CHUNK_BYTES),
                     attempt + 1, MAX_TRIES_PER_CHUNK);
             try {
-                fetchRange(candidate, staging, start, end, total);
+                boolean acquired = false;
+                try {
+                    CONNECTIONS.acquire();
+                    acquired = true;
+                    fetchRange(candidate, staging, start, end, total);
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread().interrupt();
+                    throw new InterruptedIOException("Connection wait interrupted");
+                } finally {
+                    if (acquired) CONNECTIONS.release();
+                }
                 DownloadTrace.record("完成第 " + (chunkIndex + 1) + " 块 · " + label);
                 return;
             } catch (IOException ex) {
                 last = ex;
                 DownloadTrace.failed(label + " 第 " + (chunkIndex + 1) + " 块",
                         ex.getClass().getSimpleName() + ": " + ex.getMessage());
-                if (attempt < MAX_TRIES_PER_CHUNK - 1) {
+                if (attempt < MAX_TRIES_PER_CHUNK - 1 && !loopbackTest) {
                     try { Thread.sleep(Math.min(2000, 200L << Math.min(attempt, 3))); }
                     catch (InterruptedException stop) {
                         Thread.currentThread().interrupt();
@@ -237,12 +269,14 @@ public final class ChunkedModelDownloader {
                 + MAX_TRIES_PER_CHUNK + " attempts", last);
     }
 
-    private static void fetchRange(String initial, File staging, long start, long end,
+    private void fetchRange(String initial, File staging, long start, long end,
                                    long total) throws IOException {
         URL url = new URL(initial);
         for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
             checkInterrupted();
-            if (!"https".equalsIgnoreCase(url.getProtocol()) || url.getUserInfo() != null)
+            boolean localTest = loopbackTest && "http".equals(url.getProtocol())
+                    && ("localhost".equals(url.getHost()) || "127.0.0.1".equals(url.getHost()));
+            if ((!"https".equalsIgnoreCase(url.getProtocol()) && !localTest) || url.getUserInfo() != null)
                 throw new IOException("Unsafe redirect target");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(10_000);
@@ -288,8 +322,10 @@ public final class ChunkedModelDownloader {
                     writer.seek(start);
                     byte[] data = new byte[64 * 1024];
                     long left = end - start + 1;
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
                     while (left > 0) {
                         checkInterrupted();
+                        if (System.nanoTime() > deadline) throw new IOException("Chunk stalled for 90 seconds");
                         int n = input.read(data, 0, (int) Math.min(data.length, left));
                         if (n < 0) throw new IOException("Chunk response ended early");
                         writer.write(data, 0, n);

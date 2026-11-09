@@ -80,7 +80,8 @@ public final class ModelDownloadManifest {
     private ModelDownloadManifest() {}
 
     private static void add(String url, long size, String sha256) {
-        ENTRIES.put(url, new Entry(size, sha256));
+        String pinned = sha256 == null ? VerifiedModelMirrors.digestForUrl(url) : sha256;
+        ENTRIES.put(url, new Entry(size, pinned));
     }
 
     public static Entry forUrl(String canonicalUrl) {

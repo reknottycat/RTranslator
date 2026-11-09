@@ -164,7 +164,7 @@ public class DownloadFragment extends Fragment {
             chooseModelFiles.launch(new String[]{"*/*"});
         });
         sourceModeButton.setOnClickListener(v -> {
-            String[] options = {"国内镜像优先（推荐）", "GitHub 官方优先", "仅使用加速镜像"};
+            String[] options = {"ModelScope 国内优先（推荐）", "GitHub 官方优先", "仅使用加速镜像"};
             new AlertDialog.Builder(requireContext())
                     .setTitle("模型下载来源")
                     .setSingleChoiceItems(options, DownloadSourceOrder.get(), (dialog, selected) -> {
