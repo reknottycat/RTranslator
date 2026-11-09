@@ -1,0 +1,105 @@
+name: Real ModelScope transport check
+on:
+  push:
+    branches: [chore/model-source-audit]
+    paths: ['.github/workflows/modelscope-transport-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cc37a0d6dd3a1d005e1081772cccded7c4ef2756
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile unchanged app transport with host-only Android API shims
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p host-check/src/android/content host-check/src/android/util host-check/classes
+          cat > host-check/src/android/content/Context.java <<'EOF'
+          package android.content;
+          public abstract class Context {
+            public static final int MODE_PRIVATE=0;
+            public abstract SharedPreferences getSharedPreferences(String name,int mode);
+          }
+          EOF
+          cat > host-check/src/android/content/SharedPreferences.java <<'EOF'
+          package android.content;
+          public interface SharedPreferences {
+            int getInt(String name,int value);
+            Editor edit();
+            interface Editor { Editor putInt(String name,int value); void apply(); }
+          }
+          EOF
+          cat > host-check/src/android/util/Log.java <<'EOF'
+          package android.util;
+          public class Log { public static int i(String tag,String line) { System.out.println(line);return 0;} }
+          EOF
+          cat > host-check/src/TransportCheck.java <<'EOF'
+          import nie.translator.rtranslator.downloader.*;
+          import java.io.*;
+          import java.nio.file.*;
+          import java.security.*;
+          import java.util.*;
+          import java.util.concurrent.atomic.*;
+          public class TransportCheck {
+            private static final String ROOT="https://github.com/niedev/RTranslator/releases/download/2.0.0/";
+            private static String hash(File file) throws Exception {
+              MessageDigest d=MessageDigest.getInstance("SHA-256");
+              try(InputStream in=new FileInputStream(file)) { byte[] b=new byte[65536]; int n;while((n=in.read(b))!=-1)d.update(b,0,n); }
+              StringBuilder s=new StringBuilder(); for(byte b:d.digest())s.append(String.format("%02x",b&255));return s.toString();
+            }
+            public static void main(String[] args) throws Exception {
+              Files.createDirectories(Path.of("host-check/models"));
+              StringBuilder evidence=new StringBuilder("source=cc37a0d6dd3a1d005e1081772cccded7c4ef2756\nnetwork=GitHub cloud, NOT mainland Android\n");
+              for(String name:new String[]{"Whisper_cache_initializer.onnx","Whisper_encoder.onnx"}) {
+                String canonical=ROOT+name;
+                ModelDownloadManifest.Entry m=ModelDownloadManifest.forUrl(canonical);
+                if(!DownloadSourceOrder.candidates(canonical).get(0).startsWith("https://www.modelscope.cn/")) throw new AssertionError("not ModelScope first");
+                File dest=new File("host-check/models",name);
+                if(name.equals("Whisper_encoder.onnx")) {
+                  AtomicBoolean paused=new AtomicBoolean();
+                  try {
+                    new ChunkedModelDownloader().download(canonical,dest,m,14,(done,total)->{
+                      if(done>=8388608 && paused.compareAndSet(false,true))Thread.currentThread().interrupt();
+                    });
+                    throw new AssertionError("Expected deliberate pause");
+                  } catch(IOException expected) { if(!paused.get())throw expected; }
+                  Path journal=Path.of(dest.getPath()+".chunks.done");
+                  long completed=Files.readAllLines(journal).size()-1;
+                  if(completed<1)throw new AssertionError("No durable chunks after pause");
+                  evidence.append("pause_saved_chunks=").append(completed).append('\n');
+                }
+                AtomicLong resumed=new AtomicLong(-1);
+                new ChunkedModelDownloader().download(canonical,dest,m,14,(done,total)->resumed.compareAndSet(-1,done));
+                String actual=hash(dest);
+                if(dest.length()!=m.sizeBytes || !actual.equals(m.sha256))throw new AssertionError("Wrong final model");
+                if(name.equals("Whisper_encoder.onnx") && resumed.get()<4194304)throw new AssertionError("Did not resume completed chunks");
+                evidence.append(name).append(" bytes=").append(dest.length()).append(" sha256=").append(actual).append(" resumed_bytes=").append(resumed.get()).append('\n');
+              }
+              evidence.append("result=PASS\n");
+              Files.writeString(Path.of("host-check/result.txt"),evidence.toString());
+              System.out.println(evidence);
+            }
+          }
+          SRC=app/src/main/java/nie/translator/rtranslator/downloader
+          javac -d host-check/classes $(find host-check/src -name '*.java') \
+            "$SRC/ChunkedModelDownloader.java" "$SRC/DownloadSourceOrder.java" "$SRC/DownloadTrace.java" \
+            "$SRC/ModelDownloadManifest.java" "$SRC/VerifiedModelMirrors.java"
+      - name: Run real 4 MiB/14-connection download, deliberate pause and resume
+        run: java -cp host-check/classes TransportCheck | tee host-check/transport.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-modelscope-transport-evidence
+          path: |
+            host-check/result.txt
+            host-check/transport.log
+          if-no-files-found: error
