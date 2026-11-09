@@ -26,7 +26,7 @@ public final class DownloadTrace {
         String line = stamp + "  " + safe;
         LINES.addLast(line);
         while (LINES.size() > MAX_LINES) LINES.removeFirst();
-        Log.i("RTranslatorDownload", line);
+        try { Log.i("RTranslatorDownload", line); } catch (RuntimeException notAndroidRuntime) { /* JVM tests */ }
     }
 
     public static synchronized void trying(String sourceName, String fileName,
