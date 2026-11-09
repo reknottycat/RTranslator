@@ -193,8 +193,7 @@ final class ParallelChunkStream extends InputStream {
             String label = DownloadSourceOrder.label(url);
             File temporary = new File(cache, index + "-" + Thread.currentThread().getId() + ".tmp");
             try {
-                DownloadTrace.trying(label, "分块 " + (index + 1) + "/" + count,
-                        attempt + 1, MAX_ATTEMPTS, begin, total);
+                DownloadTrace.blockTrying(label, index + 1, count, attempt + 1, MAX_ATTEMPTS);
                 fetchBlock(url, label, begin, end, required, temporary);
                 checkRunning();
                 String hash = fileHash(temporary);
@@ -262,9 +261,17 @@ final class ParallelChunkStream extends InputStream {
                 }
                 Matcher match = RANGE.matcher(connection.getHeaderField("Content-Range") == null
                         ? "" : connection.getHeaderField("Content-Range"));
-                if (!match.matches() || Long.parseLong(match.group(1)) != begin
-                        || Long.parseLong(match.group(2)) != end
-                        || Long.parseLong(match.group(3)) != total) {
+                boolean matchesRange = false;
+                if (match.matches()) {
+                    try {
+                        matchesRange = Long.parseLong(match.group(1)) == begin
+                                && Long.parseLong(match.group(2)) == end
+                                && Long.parseLong(match.group(3)) == total;
+                    } catch (NumberFormatException invalid) {
+                        throw new IOException("Invalid Content-Range number", invalid);
+                    }
+                }
+                if (!matchesRange) {
                     throw new IOException("Model proxy returned incorrect Content-Range");
                 }
                 long size = connection.getContentLengthLong();
