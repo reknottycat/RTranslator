@@ -154,6 +154,7 @@ public final class FallbackHttpClient implements HttpClient {
             checkActive();
             disconnectTransport();
             String candidate = candidates.get(nextCandidate++);
+            ModelDownloadLog.record("正在连接（第 " + nextCandidate + "/" + candidates.size() + " 个来源）", candidate);
             try {
                 URL url = new URL(candidate);
                 String requiredScheme = url.getProtocol();
@@ -181,6 +182,7 @@ public final class FallbackHttpClient implements HttpClient {
                             throw new IOException("Invalid or excessive model redirects");
                         }
                         URL redirected = new URL(url, location);
+                        ModelDownloadLog.record("HTTP " + code + "，跳转到 " + redirected.getHost(), candidate);
                         disconnectTransport();
                         url = redirected;
                         continue;
@@ -188,14 +190,17 @@ public final class FallbackHttpClient implements HttpClient {
                     validateResponse(code);
                     stream = connection.getInputStream();
                     if (firstETag == null) firstETag = connection.getHeaderField("ETag");
+                    ModelDownloadLog.record("已连接，HTTP " + code + "，开始传输", candidate);
                     return;
                 }
             } catch (IOException e) {
                 lastFailure = e;
+                ModelDownloadLog.record("失败：" + e.getClass().getSimpleName() + " - " + e.getMessage() + "；尝试下一个来源", candidate);
                 checkActive();
             }
         }
         disconnectTransport();
+        ModelDownloadLog.record("所有来源均不可用，请手动导入模型", request.getUrl());
         throw new IOException("All model download sources failed", lastFailure);
     }
 
