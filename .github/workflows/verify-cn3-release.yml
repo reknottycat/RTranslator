@@ -1,0 +1,94 @@
+name: Verify public CN3 APK delivery
+on:
+  push:
+    branches: [chore/model-source-audit]
+    paths: ['.github/workflows/verify-cn3-release.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the APK build to succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 42651124849 --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+      - name: Read build evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download 42651124849 --repo "$GITHUB_REPOSITORY" --name ModelScope-CN-test-evidence --dir validation/tests
+          gh run download 42651124849 --repo "$GITHUB_REPOSITORY" --name RTranslator-ModelScope-CN-verified --dir validation/build
+      - name: Independently download the public APK without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import urllib.request as u, json, hashlib, xml.etree.ElementTree as ET
+          from datetime import datetime, timezone
+          source='cc37a0d6dd3a1d005e1081772cccded7c4ef2756'
+          tag='cn-v3.0.0-beta2.3-ms-cc37a0d6'
+          api='https://api.github.com/repos/reknottycat/RTranslator/releases/tags/'+tag
+          headers={'User-Agent':'RTranslator-public-release-verifier/1.0'}
+          with u.urlopen(u.Request(api,headers=headers),timeout=30) as r: release=json.load(r)
+          assert not release['draft'], 'Not a public release'
+          assets=[a for a in release['assets'] if a['name'].endswith('.apk')]
+          assert len(assets)==1
+          asset=assets[0]
+          h=hashlib.sha256(); size=0; first=None
+          with u.urlopen(u.Request(asset['browser_download_url'],headers=headers),timeout=60) as r:
+              status=r.status
+              while True:
+                  chunk=r.read(1024*1024)
+                  if not chunk: break
+                  if first is None: first=chunk[:4]
+                  h.update(chunk); size+=len(chunk)
+          assert status==200 and first==b'PK\x03\x04' and size==asset['size'], 'Not the advertised APK'
+          downloaded_hash=h.hexdigest()
+          local=list(Path('validation/build').rglob('*.apk'))
+          assert len(local)==1
+          with local[0].open('rb') as f:
+              expected=hashlib.file_digest(f,'sha256').hexdigest()
+          assert downloaded_hash==expected, 'Release and tested APK differ'
+          if asset.get('digest'): assert asset['digest']=='sha256:'+expected
+          identity=list(Path('validation/build').rglob('source-commit.txt'))
+          assert len(identity)==1 and identity[0].read_text().strip()==source
+          cases=[]
+          for p in Path('validation/tests').rglob('TEST-*.xml'):
+              root=ET.parse(p).getroot()
+              cases.append({'suite':root.get('name'),'tests':int(root.get('tests','0')),'failures':int(root.get('failures','0')),'errors':int(root.get('errors','0')),'skipped':int(root.get('skipped','0'))})
+          totals={k:sum(c[k] for c in cases) for k in ['tests','failures','errors','skipped']}
+          assert totals['tests']>=40 and totals['failures']==totals['errors']==0, totals
+          lint=[]
+          for p in Path('validation/tests').rglob('lint-results-debug.xml'):
+              issues=ET.parse(p).getroot().findall('issue')
+              lint.append({'errors':sum(i.get('severity') in ['Error','Fatal'] for i in issues),'warnings':sum(i.get('severity')=='Warning' for i in issues)})
+          report={'checked_at':datetime.now(timezone.utc).isoformat(),'source_commit':source,'build_run':42651124849,'public_release_url':release['html_url'],'public_apk_url':asset['browser_download_url'],'anonymous_download_status':status,'size_bytes':size,'sha256':expected,'release_bytes_identical_to_tested_build':True,'junit':totals,'suites':cases,'lint':lint,'limitations':['No physical Android device acceptance test','Cloud network does not establish mainland carrier speed','Debug signature may differ from prior CI builds']}
+          Path('reports').mkdir(exist_ok=True)
+          Path('reports/cn3-release-verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          PY
+      - name: Record verified delivery evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add reports/cn3-release-verification.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'evidence: public APK download, exact build hash and JUnit totals'
+            git push origin HEAD:chore/model-source-audit
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-cn3-release-verification
+          path: reports/cn3-release-verification.json
+          if-no-files-found: warn
