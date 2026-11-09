@@ -59,7 +59,6 @@ public final class FallbackHttpClient implements HttpClient {
     private int nextCandidate;
     private HttpURLConnection connection;
     private InputStream stream;
-    private SegmentedModelStream segmentedStream;
     private long startOffset;
     private long position;
     private long total;
@@ -87,7 +86,6 @@ public final class FallbackHttpClient implements HttpClient {
         firstETag = null;
         nextCandidate = 0;
         digest = null;
-        segmentedStream = null;
         metadata = sources.metadata(request.getUrl());
         candidates = sources.urls(request.getUrl());
         DownloadTrace.state("准备模型：" + request.getFileName()
@@ -104,24 +102,6 @@ public final class FallbackHttpClient implements HttpClient {
             if (total > 0 && startOffset == total) {
                 verifyDigest();
                 stream = new ByteArrayInputStream(new byte[0]);
-            } else if (metadata != null && candidates.size() > 1
-                    && startOffset < total) {
-                // Range-verified 4 MiB chunks; PRDownloader still receives a sequential stream.
-                // If all chunk sources fail, the existing sequential fallback can retry.
-                segmentedStream = new SegmentedModelStream(request.getUrl(), candidates,
-                        new File(request.getDirPath()), startOffset, total);
-                stream = segmentedStream;
-                DownloadTrace.state("启用并发分块下载：" + request.getFileName());
-            } else if (sources == MODEL_SOURCES && metadata != null
-                    && total - startOffset >= ParallelChunkStream.CHUNK_SIZE * 2L) {
-                try {
-                    stream = new ParallelChunkStream(new File(request.getDirPath()),
-                            request.getUrl(), candidates, startOffset, total);
-                } catch (IOException parallelUnavailable) {
-                    DownloadTrace.failed("分块下载", parallelUnavailable.getMessage());
-                    stream = null;
-                    openNextSource();
-                }
             } else {
                 openNextSource();
             }
@@ -351,7 +331,6 @@ public final class FallbackHttpClient implements HttpClient {
             }
         }
         verified = true;
-        if (segmentedStream != null) segmentedStream.markVerified();
     }
 
     private IntegrityException corrupt(String message) {
