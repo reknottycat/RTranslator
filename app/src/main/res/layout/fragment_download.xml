@@ -117,7 +117,7 @@
             <ScrollView
                 android:id="@+id/downloadLogScroll"
                 android:layout_width="match_parent"
-                android:layout_height="160dp"
+                android:layout_height="100dp"
                 android:fillViewport="true"
                 android:visibility="gone">
                 <TextView
@@ -155,7 +155,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0"
             tools:progress="30" />
 
@@ -171,7 +171,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0"
             tools:text="Transfering Whisper cache initializer batch in internal memory" />
 
@@ -190,7 +190,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <TextView
@@ -208,7 +208,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <ImageButton
@@ -228,7 +228,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.498"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <ImageButton
@@ -246,7 +246,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@+id/progress_numbers"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="0.976" />
 
         <TextView
@@ -272,7 +272,7 @@
             app:layout_constraintBottom_toTopOf="@+id/progress_description"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="0.0" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
