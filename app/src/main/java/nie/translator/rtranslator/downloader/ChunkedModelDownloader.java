@@ -187,9 +187,9 @@ public final class ChunkedModelDownloader {
                                   int index) throws IOException {
         boolean fresh = !checkpoint.exists() || checkpoint.length() == 0;
         try (FileOutputStream output = new FileOutputStream(checkpoint, true)) {
-            if (fresh) output.write((header(url, entry) + "\\n")
+            if (fresh) output.write((header(url, entry) + "\n")
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            output.write((index + "\\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.write((index + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             output.getFD().sync();
         }
     }
@@ -207,7 +207,11 @@ public final class ChunkedModelDownloader {
         for (int attempt = 0; attempt < MAX_TRIES_PER_CHUNK; attempt++) {
             checkInterrupted();
             // Spread workers across candidates and rotate on errors.
-            String candidate = sources.get((chunkIndex + attempt) % sources.size());
+            int firstPool = DownloadSourceOrder.get() == DownloadSourceOrder.OFFICIAL_FIRST
+                    ? 1 : Math.min(sources.size(), 3);
+            int endpointIndex = attempt == 0 ? chunkIndex % firstPool
+                    : (chunkIndex + attempt) % sources.size();
+            String candidate = sources.get(endpointIndex);
             String label = DownloadSourceOrder.label(candidate);
             DownloadTrace.trying(label, staging.getName(), attempt + 1,
                     MAX_TRIES_PER_CHUNK, start, total);
@@ -274,7 +278,8 @@ public final class ChunkedModelDownloader {
                 } catch (NumberFormatException ex) {
                     throw new IOException("Bad Content-Range number", ex);
                 }
-                if (connection.getContentLengthLong() != end - start + 1)
+                if (connection.getContentLengthLong() >= 0
+                        && connection.getContentLengthLong() != end - start + 1)
                     throw new IOException("Wrong Content-Length for chunk");
                 DownloadTrace.connected(DownloadSourceOrder.label(initial), code);
                 try (BufferedInputStream input = new BufferedInputStream(connection.getInputStream(), 64 * 1024);
