@@ -43,6 +43,87 @@
             app:layout_constraintTop_toTopOf="@+id/guideline8"
             app:layout_constraintVertical_bias="0" />
 
+        <!-- Persistent first-run controls; no need to reach Android/data in a file manager. -->
+        <LinearLayout
+            android:id="@+id/downloadToolsPanel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/importModelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/cn_import_models"
+                android:textAllCaps="false" />
+
+            <TextView
+                android:id="@+id/downloadSourceStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:padding="10dp"
+                android:background="@color/primary_very_lite"
+                android:text="@string/cn_source_pending"
+                android:textColor="@color/dark_gray"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sourceModeButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_source_choose"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/toggleDownloadLogButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_show_log"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/copyDownloadLogButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_copy_log"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <ScrollView
+                android:id="@+id/downloadLogScroll"
+                android:layout_width="match_parent"
+                android:layout_height="160dp"
+                android:fillViewport="true"
+                android:visibility="gone">
+                <TextView
+                    android:id="@+id/downloadLogText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="@string/cn_source_pending"
+                    android:textSize="11sp"
+                    android:textIsSelectable="true" />
+            </ScrollView>
+
+        </LinearLayout>
+
         <androidx.constraintlayout.widget.Guideline
             android:id="@+id/guideline8"
             android:layout_width="wrap_content"
