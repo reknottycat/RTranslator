@@ -9,8 +9,11 @@ import com.downloader.internal.ComponentHolder;
 import com.downloader.request.DownloadRequest;
 import com.downloader.request.DownloadRequestBuilder;
 import com.downloader.request.QuietDownloadRequest;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import okio.Buffer;
 
 import org.junit.After;
 import org.junit.Before;
@@ -24,7 +27,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -43,7 +45,7 @@ public class PrDownloaderTransportTest {
     private static final int REQUEST_ID = 142;
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
     private byte[] payload;
-    private HttpServer server;
+    private MockWebServer server;
     private File directory;
     private MemoryDb database;
     private Object oldClient;
@@ -58,19 +60,20 @@ public class PrDownloaderTransportTest {
         oldClient = field("httpClient").get(ComponentHolder.getInstance());
         oldDatabase = field("dbHelper").get(ComponentHolder.getInstance());
         field("dbHelper").set(ComponentHolder.getInstance(), database);
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/model", exchange -> serveModel(exchange, payload));
-        server.createContext("/failed", exchange -> {
-            requests.incrementAndGet();
-            exchange.sendResponseHeaders(503, -1);
-            exchange.close();
+        server = new MockWebServer();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if ("/model".equals(request.getPath())) return serveModel(request, payload);
+                requests.incrementAndGet();
+                return new MockResponse().setResponseCode("/failed".equals(request.getPath()) ? 503 : 404);
+            }
         });
         server.start();
         installClient(client("/model"));
     }
 
     @After public void tearDown() throws Exception {
-        if (server != null) server.stop(0);
+        if (server != null) server.shutdown();
         field("httpClient").set(ComponentHolder.getInstance(), oldClient);
         field("dbHelper").set(ComponentHolder.getInstance(), oldDatabase);
     }
@@ -155,7 +158,7 @@ public class PrDownloaderTransportTest {
 
     private FallbackHttpClient client(String... paths) throws Exception {
         List<String> candidates = new ArrayList<>();
-        for (String path : paths) candidates.add("http://127.0.0.1:" + server.getAddress().getPort() + path);
+        for (String path : paths) candidates.add(server.url(path).toString());
         ModelDownloadManifest.Entry entry = new ModelDownloadManifest.Entry(payload.length, sha256(payload));
         return new FallbackHttpClient(new FallbackHttpClient.Sources() {
             @Override public List<String> urls(String url) { return candidates; }
@@ -210,17 +213,15 @@ public class PrDownloaderTransportTest {
     private File partial() { return new File(directory, "model.zip.temp"); }
     private File destination() { return new File(directory, "model.zip"); }
 
-    private void serveModel(HttpExchange exchange, byte[] bytes) throws IOException {
+    private MockResponse serveModel(RecordedRequest request, byte[] bytes) {
         requests.incrementAndGet();
-        String range = exchange.getRequestHeaders().getFirst("Range");
+        String range = request.getHeader("Range");
         int start = Integer.parseInt(range.substring("bytes=".length(), range.length() - 1));
-        exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-        exchange.getResponseHeaders().set("ETag", ETAG);
-        exchange.getResponseHeaders().set("Content-Range", "bytes " + start + "-"
-                + (bytes.length - 1) + "/" + bytes.length);
-        exchange.sendResponseHeaders(206, bytes.length - start);
-        exchange.getResponseBody().write(bytes, start, bytes.length - start);
-        exchange.close();
+        return new MockResponse().setResponseCode(206)
+                .setHeader("Content-Type", "application/octet-stream")
+                .setHeader("ETag", ETAG)
+                .setHeader("Content-Range", "bytes " + start + "-" + (bytes.length - 1) + "/" + bytes.length)
+                .setBody(new Buffer().write(bytes, start, bytes.length - start));
     }
 
     private static Field field(String name) throws Exception {
