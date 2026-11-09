@@ -232,5 +232,6 @@
     <string name="cn_copy_log">复制日志</string>
     <string name="cn_import_completed">模型文件导入成功</string>
     <string name="cn_import_failed">模型导入失败，请查看日志</string>
+    <string name="cn_parallelism_choose">并发下载速度</string>
 </resources>
 
