@@ -46,24 +46,35 @@ public final class DownloadSourceOrder {
             result.add(officialUrl);
             return result;
         }
-        String ghfast = "https://ghfast.top/" + officialUrl;
-        String ghproxy = "https://ghproxy.net/" + officialUrl;
-        String backup1 = "https://gh-proxy.org/" + officialUrl;
-        String backup2 = "https://ghproxy.imciel.com/" + officialUrl;
+        // ModelScope is deliberately NOT advertised unless the exact RTranslator asset
+        // (including digest) has been verified. Similar model names are not interchangeable.
+        String mirrorA = "https://gh-proxy.org/" + officialUrl;
+        String mirrorB = "https://ghproxy.imciel.com/" + officialUrl;
+        String mirrorC = "https://gh-proxy.com/" + officialUrl;
         if (mode == OFFICIAL_FIRST) result.add(officialUrl);
-        result.add(ghfast);
-        result.add(ghproxy);
-        result.add(backup1);
-        result.add(backup2);
+        result.add(mirrorA);
+        result.add(mirrorB);
+        result.add(mirrorC);
         if (mode == MIRROR_FIRST) result.add(officialUrl);
         return result;
     }
 
+    public static int parallelThreads(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt("cn_model_parallel_threads", 14) == 28 ? 28 : 14;
+    }
+
+    public static void setParallelThreads(Context context, int threads) {
+        if (threads != 14 && threads != 28) throw new IllegalArgumentException("Invalid thread count");
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putInt("cn_model_parallel_threads", threads).apply();
+        DownloadTrace.record("并发下载设置：" + threads + " 条连接，每块 4 MiB");
+    }
+
     public static String label(String url) {
-        if (url.startsWith("https://ghfast.top/")) return "国内加速 A · ghfast.top";
-        if (url.startsWith("https://ghproxy.net/")) return "国内加速 B · ghproxy.net";
-        if (url.startsWith("https://gh-proxy.org/")) return "备用镜像 C · gh-proxy.org";
-        if (url.startsWith("https://ghproxy.imciel.com/")) return "备用镜像 D · imciel";
+        if (url.startsWith("https://gh-proxy.org/")) return "国内代理 A · gh-proxy.org";
+        if (url.startsWith("https://ghproxy.imciel.com/")) return "国内代理 B · imciel";
+        if (url.startsWith("https://gh-proxy.com/")) return "国内代理 C · gh-proxy.com";
         return "GitHub 官方";
     }
 }
