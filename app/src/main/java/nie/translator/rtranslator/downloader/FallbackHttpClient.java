@@ -59,6 +59,7 @@ public final class FallbackHttpClient implements HttpClient {
     private int nextCandidate;
     private HttpURLConnection connection;
     private InputStream stream;
+    private SegmentedModelStream segmentedStream;
     private long startOffset;
     private long position;
     private long total;
@@ -86,6 +87,7 @@ public final class FallbackHttpClient implements HttpClient {
         firstETag = null;
         nextCandidate = 0;
         digest = null;
+        segmentedStream = null;
         metadata = sources.metadata(request.getUrl());
         candidates = sources.urls(request.getUrl());
         DownloadTrace.state("准备模型：" + request.getFileName()
@@ -102,6 +104,14 @@ public final class FallbackHttpClient implements HttpClient {
             if (total > 0 && startOffset == total) {
                 verifyDigest();
                 stream = new ByteArrayInputStream(new byte[0]);
+            } else if (metadata != null && candidates.size() > 1
+                    && startOffset < total) {
+                // Range-verified 4 MiB chunks; PRDownloader still receives a sequential stream.
+                // If all chunk sources fail, the existing sequential fallback can retry.
+                segmentedStream = new SegmentedModelStream(request.getUrl(), candidates,
+                        new File(request.getDirPath()), startOffset, total);
+                stream = segmentedStream;
+                DownloadTrace.state("启用并发分块下载：" + request.getFileName());
             } else {
                 openNextSource();
             }
@@ -331,6 +341,7 @@ public final class FallbackHttpClient implements HttpClient {
             }
         }
         verified = true;
+        if (segmentedStream != null) segmentedStream.markVerified();
     }
 
     private IntegrityException corrupt(String message) {
@@ -380,6 +391,7 @@ public final class FallbackHttpClient implements HttpClient {
         if (stream != null) {
             try { stream.close(); } catch (IOException ignored) { }
             stream = null;
+            segmentedStream = null;
         }
         if (connection != null) {
             connection.disconnect();
