@@ -190,7 +190,7 @@ public class DownloadFragment extends Fragment {
             ClipboardManager clipboard = (ClipboardManager)
                     requireContext().getSystemService(Context.CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("RTranslator model log",
-                    DownloadTrace.status() + "\\n" + DownloadTrace.recentLines()));
+                    DownloadTrace.status() + System.lineSeparator() + DownloadTrace.recentLines()));
             Toast.makeText(requireContext(), R.string.cn_copy_log, Toast.LENGTH_SHORT).show();
         });
         retryButton.setOnClickListener(new View.OnClickListener() {
