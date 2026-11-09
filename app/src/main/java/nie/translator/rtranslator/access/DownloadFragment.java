@@ -24,6 +24,9 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
+import android.widget.Button;
+import androidx.appcompat.app.AlertDialog;
+import nie.translator.rtranslator.downloader.ModelDownloadLog;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -59,6 +62,13 @@ public class DownloadFragment extends Fragment {
     private LinearProgressIndicator progressBar;
     private TextView progressDescriptionText;
     private TextView progressNumbersText;
+    private TextView sourceStatusText;
+    private final Runnable sourceStatusRefresh = new Runnable() {
+        @Override public void run() {
+            if (sourceStatusText != null) sourceStatusText.setText(ModelDownloadLog.summary());
+            if (mainHandler != null && isAdded()) mainHandler.postDelayed(this, 1000);
+        }
+    };
     private DownloadManager.Callback downloadManagerCallback;
     private boolean guiStateRestored = false;
 
@@ -90,6 +100,13 @@ public class DownloadFragment extends Fragment {
         pauseButton = view.findViewById(R.id.pauseButton);
         pauseButton.setTag("iconPause");
         progressNumbersText = view.findViewById(R.id.progress_numbers);
+        sourceStatusText = view.findViewById(R.id.download_source_status);
+        Button logButton = view.findViewById(R.id.download_log_button);
+        logButton.setOnClickListener(v -> new AlertDialog.Builder(requireContext())
+                .setTitle("模型下载日志")
+                .setMessage(ModelDownloadLog.history().isEmpty() ? "暂无记录" : ModelDownloadLog.history())
+                .setPositiveButton("关闭", null)
+                .show());
     }
 
     @Override
@@ -183,6 +200,7 @@ public class DownloadFragment extends Fragment {
     @Override
     public void onStart() {
         super.onStart();
+        if (mainHandler != null) mainHandler.post(sourceStatusRefresh);
         if(global != null && DOWNLOAD_INFOS != null) {
             //if the internal or external free memory are low, we show a warning
             double requiredSize = 0;
@@ -252,6 +270,7 @@ public class DownloadFragment extends Fragment {
     public void onStop() {
         super.onStop();
         guiStateRestored = false;
+        if (mainHandler != null) mainHandler.removeCallbacks(sourceStatusRefresh);
         downloader.unsubscribe();
         //we cancel the storage warning (in this way when the user reopens the app the warning is shown only if the storage is still low)
         storageWarningText.setVisibility(View.GONE);
