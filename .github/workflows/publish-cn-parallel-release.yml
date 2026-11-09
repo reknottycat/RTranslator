@@ -1,0 +1,73 @@
+name: Publish CN beta2.2 parallel APK (separate immutable release)
+
+on:
+  push:
+    branches: [chore/publish-cn-beta2-parallel]
+    paths: [.github/workflows/publish-cn-parallel-release.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'reknottycat/RTranslator'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Verify successful Android CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run watch 42649225236 --repo "$GITHUB_REPOSITORY" --exit-status
+      - name: Download and audit exact verified APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p source
+          gh run download 42649225236 --repo "$GITHUB_REPOSITORY" \
+            --name RTranslator-3.0.0-beta2-cn.2-arm64 --dir source
+          mapfile -t found < <(find source -type f -name '*.apk')
+          test ${#found[@]} -eq 1
+          cp "${found[0]}" RTranslator-3.0.0-beta2-cn.2-parallel-arm64.apk
+          meta=$(find source -type f -name apk-badging.txt -print -quit)
+          test -n "$meta"
+          grep -Fq "versionName='3.0.0-beta2-cn.2'" "$meta"
+          grep -Fq "versionCode='29'" "$meta"
+          sha256sum RTranslator-3.0.0-beta2-cn.2-parallel-arm64.apk > SHA256SUMS
+      - name: Publish a distinct, traceable public prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="cn-v3.0.0-beta2.2-parallel.1"
+          cat > NOTES.md <<'EOF'
+          **RTranslator CN beta2.2 parallel download preview (unofficial)**
+
+          - Android 9+, ARM64, package `nie.translator.rtranslator.cn`
+          - Model source labels, status, failure reasons and copyable logs
+          - Original model files can be imported via the Android document picker
+          - 4 MiB blocks, 14 simultaneous HTTP Range connections by default or 28 by user choice
+          - Per-block 8 retries; rotate GitHub proxies: gh-proxy.org, ghproxy.imciel.com and gh-proxy.com
+          - Disk-synced `chunks.done` journal for process restart and resumption
+          - Official ZIP SHA-256 where published; exact length and existing ONNX validation for legacy files
+          - ModelScope is intentionally not used: no identical model assets with matching digests could be verified.
+          - Downloads have not been acceptance-tested from a real mainland-China device. Claimed throughput is not guaranteed.
+
+          **Install note:** This is a debug-signed preview. Different CI builds can have different signing certificates; you may need to back up model/data files and uninstall your existing CN build before installing.
+
+          Source commit: [9b48b3ff56e5](https://github.com/reknottycat/RTranslator/commit/9b48b3ff56e57b385b53ff3812cb2c77a152b046).
+          Build and tests: https://github.com/reknottycat/RTranslator/actions/runs/42649225236
+
+          SHA-256:
+          EOF
+          cat SHA256SUMS >> NOTES.md
+          gh release create "$TAG" RTranslator-3.0.0-beta2-cn.2-parallel-arm64.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 9b48b3ff56e57b385b53ff3812cb2c77a152b046 \
+            --title "RTranslator CN beta2.2 Parallel: 4 MiB chunks + model import" \
+            --notes-file NOTES.md --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
