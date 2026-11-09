@@ -47,13 +47,13 @@
 
     <application
         android:name="nie.translator.rtranslator.Global"
-        tools:replace="android:allowBackup"
+        tools:replace="android:allowBackup,android:label"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:requestLegacyExternalStorage="true"
         android:largeHeap="true"
         android:supportsRtl="true"
@@ -113,7 +113,7 @@
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.gallery.RTranslator.2.0.provider"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
