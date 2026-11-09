@@ -380,7 +380,6 @@ public final class FallbackHttpClient implements HttpClient {
         if (stream != null) {
             try { stream.close(); } catch (IOException ignored) { }
             stream = null;
-            segmentedStream = null;
         }
         if (connection != null) {
             connection.disconnect();
