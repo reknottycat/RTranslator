@@ -53,6 +53,7 @@ public class DownloaderService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        DownloadSourceOrder.load(getApplicationContext());
         PRDownloaderConfig config = PRDownloaderConfig.newBuilder()
                 .setDatabaseEnabled(true)
                 .setHttpClient(new FallbackHttpClient())
