@@ -46,6 +46,14 @@ public final class DownloadTrace {
         record("连接成功：" + sourceName + "，HTTP " + httpCode);
     }
 
+    public static synchronized void segmentProgress(int completed, int totalBlocks, String sourceName) {
+        source = sourceName + "（并发分块）";
+        phase = "4 MiB 并发下载 · 已缓存 " + completed + "/" + totalBlocks + " 块";
+        if (completed == 1 || completed == totalBlocks || completed % 8 == 0) {
+            record("缓存完成 " + completed + "/" + totalBlocks + " 分块；最新成功来源 " + sourceName);
+        }
+    }
+
     public static synchronized void transferred(long current, long expected) {
         bytes = current;
         if (expected > 0) total = expected;
