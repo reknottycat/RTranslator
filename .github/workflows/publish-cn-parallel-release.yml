@@ -21,7 +21,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh run watch 42649225236 --repo "$GITHUB_REPOSITORY" --exit-status
+          # Avoid gh run watch's optional annotations endpoint, which can return 500
+          # even while the actual build is healthy.
+          run_state=""
+          for try in $(seq 1 130); do
+            run_state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42649225236" \
+              --jq '.status + "|" + (.conclusion // "pending")' 2>/dev/null || true)
+            echo "Validation run: ${run_state:-temporary API error}"
+            case "$run_state" in
+              'completed|success') break ;;
+              completed\|*) echo "Build or tests did not succeed" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$run_state" = 'completed|success'
       - name: Download and audit exact verified APK
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,9 +78,13 @@ jobs:
           SHA-256:
           EOF
           cat SHA256SUMS >> NOTES.md
-          gh release create "$TAG" RTranslator-3.0.0-beta2-cn.2-parallel-arm64.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --target 9b48b3ff56e57b385b53ff3812cb2c77a152b046 \
-            --title "RTranslator CN beta2.2 Parallel: 4 MiB chunks + model import" \
-            --notes-file NOTES.md --prerelease
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Distinct release already exists; leaving the asset intact"
+          else
+            gh release create "$TAG" RTranslator-3.0.0-beta2-cn.2-parallel-arm64.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target 9b48b3ff56e57b385b53ff3812cb2c77a152b046 \
+              --title "RTranslator CN beta2.2 Parallel: 4 MiB chunks + model import" \
+              --notes-file NOTES.md --prerelease
+          fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
