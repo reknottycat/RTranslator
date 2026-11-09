@@ -25,7 +25,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -43,6 +42,14 @@ public class Downloader {
     private int id;
     private Handler mainHandler;
     private boolean downloadsStarted = false;
+    private long generation = 0;
+    private long waitingForPause = -1;
+    private boolean resumeAfterPause = false;
+    private boolean networkActive = false;
+    private int activeNetworkDownloadId = -1;
+    private final boolean[] localFileChecked;
+    private final boolean[] importedLocally;
+    private Thread importThread;
     @Nullable
     private Thread unzipThread = null;
     @Nullable
@@ -55,24 +62,42 @@ public class Downloader {
         this.context = context;
         this.id = id;
         this.callback = callback;
+        localFileChecked = new boolean[downloadGroupInfo.downloadsInfo.length];
+        importedLocally = new boolean[downloadGroupInfo.downloadsInfo.length];
     }
 
     public void startDownloads(){
+        // PRDownloader.pause() only changes a flag. Do not submit a second writer while the
+        // previous HTTP/copy/extraction task is still unwinding and flushing its checkpoint.
+        if (waitingForPause != -1) {
+            resumeAfterPause = true;
+            return;
+        }
         if(!downloadsStarted && downloadGroupInfo.downloadsInfo.length > 0 && !downloadGroupInfo.isAllDownloadCompleted()) {
             downloadsStarted = true;
+            generation++;
             // eventual resume of the download based on the previous ones that have been completed
             // (or start from 0 if none of the previous ones are completed)
             int startIndex = downloadGroupInfo.getRunningDownloadIndex() != -1 ? downloadGroupInfo.getRunningDownloadIndex() : findFirstIncompletedDownload();
-            DownloadInfo startDownload = downloadGroupInfo.downloadsInfo[startIndex];
-            if(startIndex > 0) lastDownloadSuccessIndex = startIndex-1;
-            if(startIndex < downloadGroupInfo.downloadsInfo.length) {
+            lastDownloadSuccessIndex = startIndex - 1;
+            if(startIndex >= 0 && startIndex < downloadGroupInfo.downloadsInfo.length) {
+                DownloadInfo startDownload = downloadGroupInfo.downloadsInfo[startIndex];
                 downloadGroupInfo.setRunningDownloadIndex(startIndex);
                 int percentageTotalProgress = calculateTotalProgress(lastDownloadSuccessIndex + 1, 0);
                 if (!startDownload.isDownloadCompleted()) {
                     startDownload(startIndex);
                 } else {
                     if (startDownload.shouldUnzip() && !startDownload.isUnzipped()) {
-                        unzipRunningDownloadAndTestIntegrity(percentageTotalProgress);
+                        if (!new File(startDownload.getDestinationCompletePath()).isFile()) {
+                            // The process may have died after archive cleanup but before its
+                            // preference update reached disk. Reuse/download the official ZIP
+                            // again instead of treating a missing archive as a completed model.
+                            startDownload.setDownloadCompleted(false);
+                            localFileChecked[startIndex] = false;
+                            startDownload(startIndex);
+                        } else {
+                            unzipRunningDownloadAndTestIntegrity(percentageTotalProgress);
+                        }
                     } else {
                         if (startDownload.shouldTestIntegrity() && !startDownload.isIntegrityTested()) {
                             testRunningDownloadIntegrity(percentageTotalProgress, startDownload.getInternalFolder());
@@ -92,9 +117,17 @@ public class Downloader {
     public void pauseDownloads(){
         int currentDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
         if(currentDownloadIndex != -1) {
+            if (networkActive || importThread != null || unzipThread != null || testIntegrityThread != null) {
+                waitingForPause = generation;
+            }
+            generation++;
+            resumeAfterPause = false;
+            localFileChecked[currentDownloadIndex] = false;
             int downloadId = downloadGroupInfo.downloadsInfo[currentDownloadIndex].getDownloadId();
             Status status = PRDownloader.getStatus(downloadId);
-            if(downloadGroupInfo.getRunningDownload().isDownloading()) {    //status == Status.QUEUED || status == Status.RUNNING || status == Status.UNKNOWN
+            if (importThread != null) {
+                importThread.interrupt();
+            } else if(downloadGroupInfo.getRunningDownload().isDownloading()) {    //status == Status.QUEUED || status == Status.RUNNING || status == Status.UNKNOWN
                 PRDownloader.pause(downloadId);
             }else if(downloadGroupInfo.getRunningDownload().isUnzipping()){
                 if(unzipThread != null){
@@ -112,6 +145,17 @@ public class Downloader {
 
     public void cancelDownloads(){
         downloadsStarted = false;
+        generation++;
+        waitingForPause = -1;
+        resumeAfterPause = false;
+        if (importThread != null) importThread.interrupt();
+        if (activeNetworkDownloadId != -1) {
+            PRDownloader.cancel(activeNetworkDownloadId);
+            activeNetworkDownloadId = -1;
+            networkActive = false;
+        }
+        if (unzipThread != null) unzipThread.interrupt();
+        if (testIntegrityThread != null) testIntegrityThread.interrupt();
         int currentDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
         if(currentDownloadIndex != -1) {
             if(downloadGroupInfo.getRunningDownload().isDownloading()) {
@@ -149,24 +193,122 @@ public class Downloader {
     }
 
     public int findFirstIncompletedDownload(){
-        return DownloaderTools.findFirstIncompletedDownload(downloadGroupInfo);
+        for (int i = 0; i < downloadGroupInfo.downloadsInfo.length; i++) {
+            if (!downloadGroupInfo.downloadsInfo[i].isAllCompleted()) return i;
+        }
+        return downloadGroupInfo.downloadsInfo.length;
     }
 
     private void startDownload(int index){
+        if (!downloadsStarted) return;
+        downloadGroupInfo.setRunningDownloadIndex(index);
+        DownloadInfo info = downloadGroupInfo.downloadsInfo[index];
+        // Restored/migrated groups can contain completed files after a missing one.
+        // Keep their completed steps instead of downloading them again when advancing.
+        if (info.isDownloadCompleted()) {
+            int progress = calculateTotalProgress(index, 0);
+            if (info.shouldUnzip() && !info.isUnzipped()) {
+                unzipRunningDownloadAndTestIntegrity(progress);
+            } else if (info.shouldTestIntegrity() && !info.isIntegrityTested()) {
+                testRunningDownloadIntegrity(progress, info.getInternalFolder());
+            } else {
+                startNextDownload();
+            }
+            return;
+        }
+        ModelDownloadManifest.Entry entry = ModelDownloadManifest.forUrl(info.getUrl());
+        if (!localFileChecked[index] && entry != null) {
+            localFileChecked[index] = true;
+            final long attempt = generation;
+            importThread = new Thread(() -> {
+                boolean reused = false;
+                IOException failure = null;
+                try {
+                    File destination = new File(info.getDestinationCompletePath());
+                    File external = context.getExternalFilesDir(null);
+                    File source = external == null ? destination : new File(external, info.getName());
+                    reused = LocalModelFiles.importIfValid(source, destination, entry.sizeBytes, entry.sha256);
+                } catch (IOException error) {
+                    failure = error;
+                }
+                Thread finished = Thread.currentThread();
+                final boolean imported = reused;
+                final IOException error = failure;
+                mainHandler.post(() -> {
+                    if (importThread == finished) importThread = null;
+                    if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                    if (error != null) {
+                        failDownload(index, GENERAL_ERROR);
+                    } else if (imported) {
+                        importedLocally[index] = true;
+                        onFileDownloaded(index);
+                    } else {
+                        startNetworkDownload(index);
+                    }
+                });
+            }, "model-import");
+            importThread.start();
+            return;
+        }
+        startNetworkDownload(index);
+    }
+
+    private boolean isActive(long attempt, int index) {
+        return downloadsStarted && generation == attempt && downloadGroupInfo.getRunningDownloadIndex() == index;
+    }
+
+    private boolean finishPausedOperation(long attempt) {
+        if (waitingForPause != attempt) return false;
+        waitingForPause = -1;
+        networkActive = false;
+        if (resumeAfterPause) {
+            resumeAfterPause = false;
+            mainHandler.post(this::startDownloads);
+        }
+        return true;
+    }
+
+    private void failDownload(int index, int reason) {
+        DownloadInfo info = downloadGroupInfo.downloadsInfo[index];
+        info.setCurrentError(reason);
+        downloadGroupInfo.setRunningDownloadIndex(-1);
+        downloadsStarted = false;
+        callback.onError(downloadGroupInfo, info, reason);
+    }
+
+    private void onFileDownloaded(int index) {
+        DownloadInfo finishedDownload = downloadGroupInfo.downloadsInfo[index];
+        int percentageTotalProgress = calculateTotalProgress(index, 0);
+        downloadGroupInfo.setCurrentProgress(percentageTotalProgress);
+        finishedDownload.setCurrentProgress(100);
+        finishedDownload.setDownloadCompleted(true);
+        callback.onDownloadCompleted(downloadGroupInfo, finishedDownload);
+        if (finishedDownload.shouldUnzip()) {
+            unzipRunningDownloadAndTestIntegrity(percentageTotalProgress);
+        } else if (finishedDownload.shouldTestIntegrity()) {
+            testRunningDownloadIntegrity(percentageTotalProgress, null);
+        } else {
+            startNextDownload();
+        }
+    }
+
+    private void startNetworkDownload(int index){
+        if (!downloadsStarted) return;
         downloadGroupInfo.setRunningDownloadIndex(index);
         downloadGroupInfo.getRunningDownload().setCurrentError(-1);
         int downloadId = downloadGroupInfo.downloadsInfo[index].getDownloadId();
         Status status = PRDownloader.getStatus(downloadId);
         if(downloadId != -1){
-            if(status == Status.PAUSED){
-                PRDownloader.resume(downloadId);  //resume if the download was paused during this lifetime of the app
-                return;
-            }else if (status == Status.RUNNING || status == Status.QUEUED) {
+            if (status == Status.RUNNING || status == Status.QUEUED) {
                 // A download is already in progress.
                 // Return early so we DO NOT start a duplicate download task.
                 return;
             }
         }
+        // A paused worker has fully exited before reaching here. A new request keeps the same
+        // canonical ID/DB checkpoint and fresh callbacks, rather than reusing stale listeners.
+        final long attempt = generation;
+        networkActive = true;
         //start the download from scratch or resume it after the app has been restarted
         downloadId = PRDownloader.download(downloadGroupInfo.downloadsInfo[index].getUrl(), downloadGroupInfo.downloadsInfo[index].getDestinationPath(), downloadGroupInfo.downloadsInfo[index].getName())
                 .build()
@@ -179,7 +321,7 @@ public class Downloader {
                 .setOnPauseListener(new OnPauseListener() {
                     @Override
                     public void onPause() {
-
+                        finishPausedOperation(attempt);
                     }
                 })
                 .setOnCancelListener(new OnCancelListener() {
@@ -191,6 +333,7 @@ public class Downloader {
                 .setOnProgressListener(new OnProgressListener() {
                     @Override
                     public void onProgress(Progress progress) {
+                        if (!isActive(attempt, index)) return;
                         //here we return a value between 0 and 100 that represents the total progress made so far with the download
                         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
                         if(runningDownloadIndex != -1 && !downloadGroupInfo.getRunningDownload().isDownloadCompleted()) {
@@ -207,28 +350,17 @@ public class Downloader {
                 .start(new OnDownloadListener() {
                     @Override
                     public void onDownloadComplete() {
-                        int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
-                        if(runningDownloadIndex != -1 && !downloadGroupInfo.getRunningDownload().isDownloadCompleted()) {
-                            DownloadInfo finishedDownload = downloadGroupInfo.downloadsInfo[runningDownloadIndex];
-                            int percentageTotalProgress = calculateTotalProgress(lastDownloadSuccessIndex + 1, 0);
-                            downloadGroupInfo.setCurrentProgress(percentageTotalProgress);
-                            downloadGroupInfo.downloadsInfo[runningDownloadIndex].setCurrentProgress(100);
-                            downloadGroupInfo.downloadsInfo[runningDownloadIndex].setDownloadCompleted(true);
-                            callback.onDownloadCompleted(downloadGroupInfo, downloadGroupInfo.downloadsInfo[runningDownloadIndex]);
-                            if (finishedDownload.shouldUnzip()) {
-                                unzipRunningDownloadAndTestIntegrity(percentageTotalProgress);
-                            } else {
-                                if (finishedDownload.shouldTestIntegrity()) {
-                                    testRunningDownloadIntegrity(percentageTotalProgress, null);
-                                } else {
-                                    startNextDownload();
-                                }
-                            }
-                        }
+                        networkActive = false;
+                        activeNetworkDownloadId = -1;
+                        if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                        onFileDownloaded(index);
                     }
 
                     @Override
                     public void onError(Error error) {
+                        networkActive = false;
+                        activeNetworkDownloadId = -1;
+                        if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
                         Log.e("download error", (downloadGroupInfo.getRunningDownload() != null ? downloadGroupInfo.getRunningDownload().getName() : "") + "    " + error.toString());
                         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
                         if(runningDownloadIndex != -1 && !downloadGroupInfo.getRunningDownload().isDownloadCompleted()) {
@@ -241,19 +373,27 @@ public class Downloader {
                     }
                 });
         downloadGroupInfo.downloadsInfo[index].setDownloadId(downloadId);
+        activeNetworkDownloadId = downloadId;
     }
 
     private void unzipRunningDownloadAndTestIntegrity(int percentageTotalProgress){
         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
         if(runningDownloadIndex != -1) {
+            final long attempt = generation;
             downloadGroupInfo.getRunningDownload().setCurrentError(-1);
             DownloadInfo finishedDownload = downloadGroupInfo.downloadsInfo[runningDownloadIndex];
             callback.onProgress(downloadGroupInfo, downloadGroupInfo.downloadsInfo[runningDownloadIndex], percentageTotalProgress, 100, true, false);
             unpackZip(finishedDownload.destinationPath, finishedDownload.name, new UnpackListener() {
                 @Override
                 public void onSuccess(String topInternalFolder) {
+                    if (!isActive(attempt, runningDownloadIndex)) return;
                     downloadGroupInfo.downloadsInfo[runningDownloadIndex].setUnzipped(true);
                     downloadGroupInfo.downloadsInfo[runningDownloadIndex].setInternalFolder(topInternalFolder);
+                    callback.onUnzippingCompleted(downloadGroupInfo, finishedDownload);
+                    // Worker completion can be discarded by pause/cancel. Only remove the ZIP
+                    // after this accepted, main-thread state transition, leaving a paused worker
+                    // with a replayable archive. A failed cleanup merely leaves a reusable ZIP.
+                    new File(finishedDownload.getDestinationCompletePath()).delete();
                     if (finishedDownload.shouldTestIntegrity()) {
                         testRunningDownloadIntegrity(percentageTotalProgress, topInternalFolder);
                     } else {
@@ -263,6 +403,7 @@ public class Downloader {
 
                 @Override
                 public void onFailure() {
+                    if (!isActive(attempt, runningDownloadIndex)) return;
                     int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
                     if (runningDownloadIndex >= 0) {
                         downloadGroupInfo.downloadsInfo[runningDownloadIndex].setCurrentError(UNZIP_FAILED);
@@ -278,24 +419,50 @@ public class Downloader {
     private void testRunningDownloadIntegrity(int percentageTotalProgress, @Nullable String internalFolder) {
         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
         if(runningDownloadIndex != -1) {
+            final long attempt = generation;
             downloadGroupInfo.getRunningDownload().setCurrentError(-1);
             DownloadInfo finishedDownload = downloadGroupInfo.downloadsInfo[runningDownloadIndex];
             callback.onProgress(downloadGroupInfo, downloadGroupInfo.downloadsInfo[runningDownloadIndex], percentageTotalProgress, 100, false, true);
+            final Runnable[] result = new Runnable[1];
             NeuralNetworkApi.InitListener listener = new NeuralNetworkApi.InitListener() {
                 @Override
                 public void onInitializationFinished() {
-                    mainHandler.post(() -> {
+                    result[0] = () -> {
+                        if (!isActive(attempt, runningDownloadIndex)) return;
                         testIntegrityThread = null;
                         downloadGroupInfo.downloadsInfo[runningDownloadIndex].setIntegrityTested(true);
                         callback.onIntegrityTestCompleted(downloadGroupInfo, downloadGroupInfo.downloadsInfo[runningDownloadIndex]);
                         startNextDownload();
-                    });
+                    };
                 }
 
                 @Override
                 public void onError(int[] reasons, long value) {
-                    mainHandler.post(() -> {
+                    result[0] = () -> {
+                        if (!isActive(attempt, runningDownloadIndex)) return;
                         testIntegrityThread = null;
+                        // Old ONNX releases have sizes but no published hashes. A same-size bad
+                        // sideload must not become a permanent "downloaded, retry validation" loop.
+                        if (!finishedDownload.shouldUnzip()) {
+                            File invalid = new File(finishedDownload.getDestinationCompletePath());
+                            if (invalid.exists() && !invalid.delete()) {
+                                failDownload(runningDownloadIndex, INTEGRITY_CHECK_FAILED);
+                                return;
+                            }
+                            finishedDownload.setDownloadCompleted(false);
+                            finishedDownload.setIntegrityTested(false);
+                            finishedDownload.setCurrentProgress(0);
+                            localFileChecked[runningDownloadIndex] = true;
+                            if (importedLocally[runningDownloadIndex]) {
+                                importedLocally[runningDownloadIndex] = false;
+                                callback.onProgress(downloadGroupInfo, finishedDownload,
+                                        calculateTotalProgress(runningDownloadIndex - 1, 0), 0, false, false);
+                                mainHandler.post(() -> {
+                                    if (isActive(attempt, runningDownloadIndex)) startNetworkDownload(runningDownloadIndex);
+                                });
+                                return;
+                            }
+                        }
                         int runningDownloadIndex1 = downloadGroupInfo.getRunningDownloadIndex();
                         if (runningDownloadIndex1 >= 0) {
                             downloadGroupInfo.downloadsInfo[runningDownloadIndex1].setCurrentError(INTEGRITY_CHECK_FAILED);
@@ -303,21 +470,15 @@ public class Downloader {
                         downloadGroupInfo.setRunningDownloadIndex(-1);
                         downloadsStarted = false;
                         callback.onError(downloadGroupInfo, finishedDownload, INTEGRITY_CHECK_FAILED);
-                    });
+                    };
                 }
             };
             if (internalFolder == null && !finishedDownload.shouldUnzip()) {  //it is null only when we downloaded a file, not a .zip folder
-                testIntegrityThread = new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        NeuralNetworkApi.testModelIntegrity(finishedDownload.getDestinationCompletePath(), listener);
-                    }
-                });
-                testIntegrityThread.start();
+                runIntegrityCheck(attempt, runningDownloadIndex,
+                        () -> NeuralNetworkApi.testModelIntegrity(finishedDownload.getDestinationCompletePath(), listener),
+                        () -> { if (result[0] != null) result[0].run(); else failDownload(runningDownloadIndex, INTEGRITY_CHECK_FAILED); });
             } else if (internalFolder != null && finishedDownload.shouldUnzip) {  //if it is not null it means that we should test the models inside the top folder of an extracted .zip file
-                testIntegrityThread = new Thread(new Runnable() {
-                    @Override
-                    public void run() {
+                runIntegrityCheck(attempt, runningDownloadIndex, () -> {
                         String folderPath;
                         if (!internalFolder.isEmpty()) {
                             folderPath = finishedDownload.getDestinationPath() + "/" + internalFolder + "/";
@@ -325,17 +486,33 @@ public class Downloader {
                             folderPath = finishedDownload.getDestinationPath();
                         }
                         NeuralNetworkApi.testFolderIntegrity(folderPath, listener);
-                    }
-                });
-                testIntegrityThread.start();
+                }, () -> { if (result[0] != null) result[0].run(); else failDownload(runningDownloadIndex, INTEGRITY_CHECK_FAILED); });
             } else {
                 listener.onError(new int[]{GENERAL_ERROR}, 0);
+                if (result[0] != null) result[0].run();
             }
         }
     }
 
+    private void runIntegrityCheck(long attempt, int index, Runnable check, Runnable completion) {
+        testIntegrityThread = new Thread(() -> {
+            try {
+                check.run();
+            } finally {
+                Thread finished = Thread.currentThread();
+                mainHandler.post(() -> {
+                    if (testIntegrityThread == finished) testIntegrityThread = null;
+                    if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                    completion.run();
+                });
+            }
+        }, "model-integrity");
+        testIntegrityThread.start();
+    }
+
     private void startNextDownload(){
         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
+        if (!downloadsStarted || runningDownloadIndex < 0) return;
         if (runningDownloadIndex < downloadGroupInfo.downloadsInfo.length - 1) {
             //we start the next download and notify the end of the current one
             lastDownloadSuccessIndex = runningDownloadIndex;
@@ -377,127 +554,97 @@ public class Downloader {
     }
 
     private void unpackZip(String path, String zipname, UnpackListener listener) {
-        if(unzipThread == null) {
-            unzipThread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    boolean success = true;
-                    Path zipPath = Paths.get(path + zipname);
-                    String topFolder = null;
-
-                    if (new File(zipPath.toString()).exists()) {   //if the zip file is not present, very likely it has been deleted after the unzip and there has been some error in updating the status, so we consider the unpack successful.
-
-                        // Using try-with-resources ensures streams close safely even on early exit
-                        try (InputStream is = Files.newInputStream(zipPath);
-                             ZipInputStream zis = new ZipInputStream(new BufferedInputStream(is))) {
-
-                            ZipEntry ze;
-                            byte[] buffer = new byte[1024];
-                            int count;
-
-                            while ((ze = zis.getNextEntry()) != null) {
-                                // Check for interrupt in the outer loop
-                                if (Thread.currentThread().isInterrupted()) {
-                                    success = false;
-                                    break;
-                                }
-
-                                String filename = ze.getName();
-
-                                if (topFolder == null && filename.contains("/")) {
-                                    topFolder = filename.substring(0, filename.indexOf("/"));
-                                }
-
-                                File destFile = new File(path + filename);
-
-                                // --- RESUME LOGIC ---
-                                // If the final destination file/folder already exists, it was successfully
-                                // completely extracted in a previous run. We can safely skip it.
-                                if (destFile.exists()) {
-                                    zis.closeEntry();
-                                    continue;
-                                }
-
-                                // Need to create directories if not exists, or
-                                // it will generate an Exception...
-                                if (ze.isDirectory()) {
-                                    destFile.mkdirs();
-                                    zis.closeEntry();
-                                    continue;
-                                } else if (destFile.getParentFile() != null) {
-                                    // in the case the zip file does not indicate its internal folders as entries but only the files with the internal folders as path,
-                                    // in this way we create recursively all the missing folders in the file path
-                                    destFile.getParentFile().mkdirs();
-                                }
-
-                                // --- ATOMIC WRITE LOGIC ---
-                                // Write to a temporary file first
-                                File tmpFile = new File(path + filename + ".tmp");
-                                boolean fileComplete = true;
-
-                                try (FileOutputStream fout = new FileOutputStream(tmpFile)) {
-                                    while ((count = zis.read(buffer)) != -1) {
-                                        // Check for interrupt in the inner byte loop for immediate response
-                                        if (Thread.currentThread().isInterrupted()) {
-                                            fileComplete = false;
-                                            break;
-                                        }
-                                        fout.write(buffer, 0, count);
-                                    }
-                                }
-
-                                if (!fileComplete) {
-                                    // Thread was interrupted mid-file.
-                                    // Clean up the incomplete temp file and halt extraction.
-                                    tmpFile.delete();
-                                    success = false;
-                                    break;
-                                }
-
-                                // File is completely unzipped! Rename .tmp to the final filename.
-                                if (!tmpFile.renameTo(destFile)) {
-                                    tmpFile.delete();
-                                    success = false;
-                                    break;
-                                }
-                                zis.closeEntry();
-                            }
-
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                            success = false;
-                        }
-
-                        // If we stopped due to an interrupt, exit without deleting the zip or calling listeners
-                        if (Thread.currentThread().isInterrupted()) return;
-
-                        if (success) {
-                            try {
-                                Files.delete(zipPath);
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                                success = false;
-                            }
-                        }
-                    }
-
-                    if (topFolder == null) topFolder = "";
-
-                    if (success) {
-                        String finalTopFolder = topFolder;
-                        mainHandler.post(() -> {
-                            unzipThread = null;
-                            if (listener != null) listener.onSuccess(finalTopFolder);
-                        });
-                    } else {
-                        mainHandler.post(() -> {
-                            unzipThread = null;
-                            if (listener != null) listener.onFailure();
-                        });
-                    }
+        if (unzipThread != null) return;
+        final long attempt = generation;
+        final int index = downloadGroupInfo.getRunningDownloadIndex();
+        unzipThread = new Thread(() -> {
+            String folder = null;
+            IOException failure = null;
+            try {
+                folder = extractZip(path, zipname);
+            } catch (IOException error) {
+                failure = error;
+            }
+            final String topFolder = folder;
+            final IOException error = failure;
+            Thread finished = Thread.currentThread();
+            // Clear the worker and transition in one main-thread callback. A second finally
+            // callback could otherwise release a pause belonging to the next stage.
+            mainHandler.post(() -> {
+                if (unzipThread == finished) unzipThread = null;
+                if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                if (listener != null) {
+                    if (error == null) listener.onSuccess(topFolder);
+                    else listener.onFailure();
                 }
             });
-            unzipThread.start();
+        }, "model-unzip");
+        unzipThread.start();
+    }
+
+    private String extractZip(String path, String zipname) throws IOException {
+        Path zipPath = new File(path, zipname).toPath();
+        String root = new File(path).getCanonicalPath() + File.separator;
+        String topFolder = "";
+        boolean hasEntries = false;
+        try (InputStream input = Files.newInputStream(zipPath);
+             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(input))) {
+            ZipEntry entry;
+            byte[] buffer = new byte[64 * 1024];
+            while ((entry = zip.getNextEntry()) != null) {
+                checkExtractionInterrupted();
+                hasEntries = true;
+                String filename = entry.getName();
+                if (topFolder.isEmpty() && filename.contains("/")) {
+                    topFolder = filename.substring(0, filename.indexOf("/"));
+                }
+                File destination = new File(path, filename);
+                if (!destination.getCanonicalPath().startsWith(root)) {
+                    throw new IOException("Archive entry is outside the model directory");
+                }
+                // Completed entries survive a pause; incomplete entries are staged separately.
+                if (destination.exists()) {
+                    zip.closeEntry();
+                    continue;
+                }
+                if (entry.isDirectory()) {
+                    if (!destination.mkdirs() && !destination.isDirectory()) {
+                        throw new IOException("Cannot create model directory");
+                    }
+                    zip.closeEntry();
+                    continue;
+                }
+                File parent = destination.getParentFile();
+                if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
+                    throw new IOException("Cannot create model directory");
+                }
+                File temporary = new File(destination.getPath() + ".tmp");
+                boolean published = false;
+                try {
+                    try (FileOutputStream output = new FileOutputStream(temporary)) {
+                        int count;
+                        while ((count = zip.read(buffer)) != -1) {
+                            checkExtractionInterrupted();
+                            output.write(buffer, 0, count);
+                        }
+                    }
+                    checkExtractionInterrupted();
+                    if (!temporary.renameTo(destination)) throw new IOException("Cannot publish model file");
+                    published = true;
+                } finally {
+                    if (!published) Files.deleteIfExists(temporary.toPath());
+                }
+                zip.closeEntry();
+            }
+        }
+        checkExtractionInterrupted();
+        if (!hasEntries) throw new IOException("Model archive is empty or invalid");
+        return topFolder;
+    }
+
+    private static void checkExtractionInterrupted() throws java.io.InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.io.InterruptedIOException("Model extraction paused or cancelled");
         }
     }
 

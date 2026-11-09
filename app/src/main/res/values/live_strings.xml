@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+<string name="single_device_conversation">On-device conversation · No Bluetooth</string>
+<string name="bluetooth_conversation_label">Bluetooth</string>
+<string name="import_original_models">Import original models (multiple files)</string>
+</resources>

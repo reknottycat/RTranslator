@@ -159,6 +159,16 @@ public class TranslationFragment extends Fragment {
         conversationButtonSmall = view.findViewById(R.id.buttonConversationSmall);
         walkieTalkieButtonText = view.findViewById(R.id.textButton1);
         conversationButtonText = view.findViewById(R.id.textButton2);
+        conversationButtonText.setText(R.string.bluetooth_conversation_label);
+        View singleDevice = view.findViewById(R.id.single_device_conversation);
+        singleDevice.setOnClickListener(v -> {
+            if (Global.ONLY_TEXT_TRANSLATION_MODE) return;
+            if (activity != null) {
+                activity.stopConversationService();
+                activity.stopWalkieTalkieService();
+                startActivity(new Intent(requireContext(), nie.translator.rtranslator.voice_translation.live.SingleDeviceConversationActivity.class));
+            }
+        });
         inputText = view.findViewById(R.id.multiAutoCompleteTextView);
         outputText = view.findViewById(R.id.multiAutoCompleteTextView2);
         lineSeparator = view.findViewById(R.id.lineSeparator);
