@@ -297,8 +297,64 @@ public class Downloader {
         }
     }
 
+    private void startChunkedDownload(int index, DownloadInfo info,
+                                      ModelDownloadManifest.Entry entry) {
+        if (importThread != null || !downloadsStarted) return;
+        final long attempt = generation;
+        final int parallelism = DownloadSourceOrder.parallelThreads(context);
+        downloadGroupInfo.setRunningDownloadIndex(index);
+        info.setCurrentError(-1);
+        DownloadTrace.state("启动高速分块下载：" + info.getName()
+                + " · 4 MiB/块 · " + parallelism + " 路并发");
+        importThread = new Thread(() -> {
+            IOException failure = null;
+            final java.util.concurrent.atomic.AtomicLong lastUpdate =
+                    new java.util.concurrent.atomic.AtomicLong(0);
+            try {
+                new ChunkedModelDownloader().download(info.getUrl(),
+                        new File(info.getDestinationCompletePath()), entry, parallelism,
+                        (bytes, total) -> {
+                            long now = android.os.SystemClock.elapsedRealtime();
+                            if (bytes != total && now - lastUpdate.get() < 300) return;
+                            lastUpdate.set(now);
+                            mainHandler.post(() -> {
+                                if (!isActive(attempt, index)) return;
+                                int overall = calculateTotalProgress(lastDownloadSuccessIndex,
+                                        bytes / 1000);
+                                int partial = (int) Math.min(100, bytes * 100 / total);
+                                downloadGroupInfo.setCurrentProgress(overall);
+                                info.setCurrentProgress(partial);
+                                callback.onProgress(downloadGroupInfo, info,
+                                        overall, partial, false, false);
+                            });
+                        });
+            } catch (IOException error) {
+                failure = error;
+            }
+            final IOException stopped = failure;
+            final Thread finishing = Thread.currentThread();
+            mainHandler.post(() -> {
+                if (importThread == finishing) importThread = null;
+                if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                if (stopped == null) {
+                    onFileDownloaded(index);
+                } else {
+                    DownloadTrace.state("分块下载失败：" + stopped.getMessage());
+                    failDownload(index, GENERAL_ERROR);
+                }
+            });
+        }, "model-range-download");
+        importThread.start();
+    }
+
     private void startNetworkDownload(int index){
         if (!downloadsStarted) return;
+        DownloadInfo info = downloadGroupInfo.downloadsInfo[index];
+        ModelDownloadManifest.Entry entry = ModelDownloadManifest.forUrl(info.getUrl());
+        if (entry != null && entry.sizeBytes >= ChunkedModelDownloader.MIN_PARALLEL_BYTES) {
+            startChunkedDownload(index, info, entry);
+            return;
+        }
         downloadGroupInfo.setRunningDownloadIndex(index);
         downloadGroupInfo.getRunningDownload().setCurrentError(-1);
         int downloadId = downloadGroupInfo.downloadsInfo[index].getDownloadId();
