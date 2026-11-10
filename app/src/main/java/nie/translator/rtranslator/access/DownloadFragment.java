@@ -17,6 +17,12 @@
 package nie.translator.rtranslator.access;
 
 import android.annotation.SuppressLint;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.icu.text.DecimalFormat;
 import android.os.Bundle;
 import android.os.Looper;
@@ -24,24 +30,35 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
-import android.widget.Button;
-import androidx.appcompat.app.AlertDialog;
-import nie.translator.rtranslator.downloader.ModelDownloadLog;
+import android.widget.ScrollView;
+import android.widget.Toast;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.progressindicator.LinearProgressIndicator;
+import com.google.android.material.button.MaterialButton;
+import androidx.appcompat.app.AlertDialog;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.List;
 
 import nie.translator.rtranslator.Global;
 import nie.translator.rtranslator.R;
 import nie.translator.rtranslator.downloader.DownloadGroupInfo;
 import nie.translator.rtranslator.downloader.DownloadInfo;
 import nie.translator.rtranslator.downloader.DownloadManager;
+import nie.translator.rtranslator.downloader.DownloadSourceOrder;
+import nie.translator.rtranslator.downloader.DownloadTrace;
+import nie.translator.rtranslator.downloader.LocalModelFiles;
+import nie.translator.rtranslator.downloader.ModelDownloadManifest;
 import nie.translator.rtranslator.tools.DownloaderTools;
 
 public class DownloadFragment extends Fragment {
@@ -62,17 +79,33 @@ public class DownloadFragment extends Fragment {
     private LinearProgressIndicator progressBar;
     private TextView progressDescriptionText;
     private TextView progressNumbersText;
-    private TextView sourceStatusText;
-    private final nie.translator.rtranslator.downloader.ModelFileImporter modelFilePicker =
-            new nie.translator.rtranslator.downloader.ModelFileImporter(this);
-    private final Runnable sourceStatusRefresh = new Runnable() {
-        @Override public void run() {
-            if (sourceStatusText != null) sourceStatusText.setText(ModelDownloadLog.summary());
-            if (mainHandler != null && isAdded()) mainHandler.postDelayed(this, 1000);
-        }
-    };
     private DownloadManager.Callback downloadManagerCallback;
     private boolean guiStateRestored = false;
+    private MaterialButton importModelButton;
+    private MaterialButton sourceModeButton;
+    private MaterialButton toggleLogButton;
+    private TextView downloadSourceStatus;
+    private TextView downloadLogText;
+    private ScrollView downloadLogScroll;
+    private final nie.translator.rtranslator.downloader.ModelFileImporter modelImporter =
+            new nie.translator.rtranslator.downloader.ModelFileImporter(this);
+
+    private final Runnable updateDownloadTrace = new Runnable() {
+        @Override public void run() {
+            if (downloadSourceStatus == null || getView() == null || mainHandler == null) return;
+            String status = DownloadTrace.status();
+            if (!status.equals(downloadSourceStatus.getText().toString())) {
+                downloadSourceStatus.setText(status);
+            }
+            if (downloadLogScroll != null && downloadLogScroll.getVisibility() == View.VISIBLE) {
+                String detail = DownloadTrace.recentLines();
+                if (!detail.equals(downloadLogText.getText().toString())) {
+                    downloadLogText.setText(detail);
+                }
+            }
+            mainHandler.postDelayed(this, 750);
+        }
+    };
 
     public DownloadFragment() {
         // Required empty public constructor
@@ -102,18 +135,12 @@ public class DownloadFragment extends Fragment {
         pauseButton = view.findViewById(R.id.pauseButton);
         pauseButton.setTag("iconPause");
         progressNumbersText = view.findViewById(R.id.progress_numbers);
-        sourceStatusText = view.findViewById(R.id.download_source_status);
-        Button importButton = view.findViewById(R.id.import_model_button);
-        importButton.setOnClickListener(v -> {
-            if (downloader != null) downloader.pauseAllDownloads();
-            modelFilePicker.launch(() -> { if (downloader != null) startAllDownloads(); });
-        });
-        Button logButton = view.findViewById(R.id.download_log_button);
-        logButton.setOnClickListener(v -> new AlertDialog.Builder(requireContext())
-                .setTitle("模型下载日志")
-                .setMessage(ModelDownloadLog.history().isEmpty() ? "暂无记录" : ModelDownloadLog.history())
-                .setPositiveButton("关闭", null)
-                .show());
+        importModelButton = view.findViewById(R.id.importModelButton);
+        sourceModeButton = view.findViewById(R.id.sourceModeButton);
+        toggleLogButton = view.findViewById(R.id.toggleDownloadLogButton);
+        downloadSourceStatus = view.findViewById(R.id.downloadSourceStatus);
+        downloadLogText = view.findViewById(R.id.downloadLogText);
+        downloadLogScroll = view.findViewById(R.id.downloadLogScroll);
     }
 
     @Override
@@ -126,6 +153,61 @@ public class DownloadFragment extends Fragment {
 
         mainHandler = new android.os.Handler(Looper.getMainLooper());
         downloader = new DownloadManager(global);
+        importModelButton.setOnClickListener(v -> {
+            DownloadTrace.state("打开系统文件选择器，等待选择模型文件");
+            downloader.pauseAllDownloads();
+            setPauseButtonStatus(true);
+            modelImporter.launch(this::startAllDownloads);
+        });
+        sourceModeButton.setOnClickListener(v -> {
+            String[] options = {"ModelScope 国内优先（推荐）", "GitHub 官方优先", "仅使用加速镜像"};
+            new AlertDialog.Builder(requireContext())
+                    .setTitle("模型下载来源")
+                    .setSingleChoiceItems(options, DownloadSourceOrder.get(), (dialog, selected) -> {
+                        DownloadSourceOrder.set(requireContext(), selected);
+                        sourceModeButton.setText(getString(R.string.cn_source_choose)
+                                + " · " + DownloadSourceOrder.modeName(selected));
+                        downloader.pauseAllDownloads();
+                        startAllDownloads();
+                        dialog.dismiss();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        });
+        sourceModeButton.setText(getString(R.string.cn_source_choose)
+                + " · " + DownloadSourceOrder.modeName(DownloadSourceOrder.get()));
+        MaterialButton parallelismButton = requireView().findViewById(R.id.parallelismButton);
+        parallelismButton.setText(getString(R.string.cn_parallelism_choose)
+                + " · " + DownloadSourceOrder.parallelThreads(requireContext()) + " 路");
+        parallelismButton.setOnClickListener(v ->
+                new AlertDialog.Builder(requireContext())
+                        .setTitle("4 MiB 分块下载并发数")
+                        .setSingleChoiceItems(new String[]{"14 路（推荐）", "28 路（高速网络）"},
+                                DownloadSourceOrder.parallelThreads(requireContext()) == 28 ? 1 : 0,
+                                (dialog, selected) -> {
+                                    int threads = selected == 1 ? 28 : 14;
+                                    DownloadSourceOrder.setParallelThreads(requireContext(), threads);
+                                    parallelismButton.setText(getString(R.string.cn_parallelism_choose)
+                                            + " · " + threads + " 路");
+                                    downloader.pauseAllDownloads();
+                                    startAllDownloads();
+                                    dialog.dismiss();
+                                })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show());
+        toggleLogButton.setOnClickListener(v -> {
+            boolean expand = downloadLogScroll.getVisibility() != View.VISIBLE;
+            downloadLogScroll.setVisibility(expand ? View.VISIBLE : View.GONE);
+            toggleLogButton.setText(expand ? R.string.cn_hide_log : R.string.cn_show_log);
+            if (expand) downloadLogText.setText(DownloadTrace.recentLines());
+        });
+        viewCopyLog().setOnClickListener(v -> {
+            ClipboardManager clipboard = (ClipboardManager)
+                    requireContext().getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("RTranslator model log",
+                    DownloadTrace.status() + System.lineSeparator() + DownloadTrace.recentLines()));
+            Toast.makeText(requireContext(), R.string.cn_copy_log, Toast.LENGTH_SHORT).show();
+        });
         retryButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -207,7 +289,10 @@ public class DownloadFragment extends Fragment {
     @Override
     public void onStart() {
         super.onStart();
-        if (mainHandler != null) mainHandler.post(sourceStatusRefresh);
+        if (mainHandler != null) {
+            mainHandler.removeCallbacks(updateDownloadTrace);
+            mainHandler.post(updateDownloadTrace);
+        }
         if(global != null && DOWNLOAD_INFOS != null) {
             //if the internal or external free memory are low, we show a warning
             double requiredSize = 0;
@@ -276,13 +361,12 @@ public class DownloadFragment extends Fragment {
     @Override
     public void onStop() {
         super.onStop();
+        if (mainHandler != null) mainHandler.removeCallbacks(updateDownloadTrace);
         guiStateRestored = false;
-        if (mainHandler != null) mainHandler.removeCallbacks(sourceStatusRefresh);
         downloader.unsubscribe();
         //we cancel the storage warning (in this way when the user reopens the app the warning is shown only if the storage is still low)
         storageWarningText.setVisibility(View.GONE);
     }
-
 
     private void showDownloadError(){
         //we show the download error and the retry button
@@ -305,6 +389,10 @@ public class DownloadFragment extends Fragment {
             pauseButton.setTag("iconPause");
             pauseButton.setContentDescription(getResources().getString(R.string.pause));
         }
+    }
+
+    private MaterialButton viewCopyLog() {
+        return requireView().findViewById(R.id.copyDownloadLogButton);
     }
 
     private void retryCurrentDownload(){

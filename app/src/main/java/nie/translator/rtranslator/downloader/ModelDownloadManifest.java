@@ -80,11 +80,22 @@ public final class ModelDownloadManifest {
     private ModelDownloadManifest() {}
 
     private static void add(String url, long size, String sha256) {
-        ENTRIES.put(url, new Entry(size, sha256));
+        String pinned = sha256 == null ? VerifiedModelMirrors.digestForUrl(url) : sha256;
+        ENTRIES.put(url, new Entry(size, pinned));
     }
 
     public static Entry forUrl(String canonicalUrl) {
         return ENTRIES.get(canonicalUrl);
+    }
+
+    /** Exact, allowlisted filenames only; never trust the file-picker display name as a path. */
+    public static Entry forFilename(String filename) {
+        if (filename == null || filename.isEmpty() || filename.contains("/")
+                || filename.indexOf((char) 92) >= 0 || filename.contains("..")) return null;
+        for (Map.Entry<String, Entry> entry : ENTRIES.entrySet()) {
+            if (entry.getKey().endsWith("/" + filename)) return entry.getValue();
+        }
+        return null;
     }
 
     public static Map<String, Entry> entries() {

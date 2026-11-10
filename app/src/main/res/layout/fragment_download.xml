@@ -43,6 +43,95 @@
             app:layout_constraintTop_toTopOf="@+id/guideline8"
             app:layout_constraintVertical_bias="0" />
 
+        <!-- Persistent first-run controls; no need to reach Android/data in a file manager. -->
+        <LinearLayout
+            android:id="@+id/downloadToolsPanel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/importModelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/cn_import_models"
+                android:textAllCaps="false" />
+
+            <TextView
+                android:id="@+id/downloadSourceStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:padding="10dp"
+                android:background="@color/primary_very_lite"
+                android:text="@string/cn_source_pending"
+                android:textColor="@color/dark_gray"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sourceModeButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_source_choose"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/toggleDownloadLogButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_show_log"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/copyDownloadLogButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cn_copy_log"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/parallelismButton"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/cn_parallelism_choose"
+                android:textAllCaps="false"/>
+
+            <ScrollView
+                android:id="@+id/downloadLogScroll"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:fillViewport="true"
+                android:visibility="gone">
+                <TextView
+                    android:id="@+id/downloadLogText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="@string/cn_source_pending"
+                    android:textSize="11sp"
+                    android:textIsSelectable="true" />
+            </ScrollView>
+
+        </LinearLayout>
+
         <androidx.constraintlayout.widget.Guideline
             android:id="@+id/guideline8"
             android:layout_width="wrap_content"
@@ -66,7 +155,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0"
             tools:progress="30" />
 
@@ -82,7 +171,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0"
             tools:text="Transfering Whisper cache initializer batch in internal memory" />
 
@@ -101,7 +190,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <TextView
@@ -119,7 +208,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <ImageButton
@@ -139,7 +228,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.498"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="1.0" />
 
         <ImageButton
@@ -157,7 +246,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@+id/progress_numbers"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="0.976" />
 
         <TextView
@@ -183,38 +272,8 @@
             app:layout_constraintBottom_toTopOf="@+id/progress_description"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/downloadSummary"
+            app:layout_constraintTop_toBottomOf="@+id/downloadToolsPanel"
             app:layout_constraintVertical_bias="0.0" />
-
-
-        <TextView
-            android:id="@+id/download_source_status"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:padding="12dp"
-            android:text="当前来源：等待连接\n状态：等待模型下载"
-            android:textSize="13sp"
-            android:background="@color/primary_very_lite"
-            app:layout_constraintTop_toBottomOf="@id/downloadSummary"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <Button
-            android:id="@+id/import_model_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="从手机文件导入模型"
-            app:layout_constraintTop_toBottomOf="@id/download_source_status"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <Button
-            android:id="@+id/download_log_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="查看下载日志"
-            app:layout_constraintTop_toBottomOf="@id/download_source_status"
-            app:layout_constraintStart_toStartOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

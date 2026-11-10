@@ -45,8 +45,7 @@ public final class FallbackHttpClient implements HttpClient {
         @Override public List<String> urls(String url) {
             // Only public, explicitly pinned model assets go through third-party proxies.
             if (ModelDownloadManifest.forUrl(url) == null) return Collections.singletonList(url);
-            return Arrays.asList(url, "https://gh-proxy.org/" + url,
-                    "https://ghproxy.imciel.com/" + url);
+            return DownloadSourceOrder.candidates(url);
         }
         @Override public ModelDownloadManifest.Entry metadata(String url) {
             return ModelDownloadManifest.forUrl(url);
@@ -89,6 +88,8 @@ public final class FallbackHttpClient implements HttpClient {
         digest = null;
         metadata = sources.metadata(request.getUrl());
         candidates = sources.urls(request.getUrl());
+        DownloadTrace.state("准备模型：" + request.getFileName()
+                + "；尝试 " + candidates.size() + " 个来源");
         startOffset = request.getDownloadedBytes();
         position = startOffset;
         total = metadata != null ? metadata.sizeBytes : request.getTotalBytes();
@@ -154,7 +155,9 @@ public final class FallbackHttpClient implements HttpClient {
             checkActive();
             disconnectTransport();
             String candidate = candidates.get(nextCandidate++);
-            ModelDownloadLog.record("正在连接（第 " + nextCandidate + "/" + candidates.size() + " 个来源）", candidate);
+            String sourceLabel = DownloadSourceOrder.label(candidate);
+            DownloadTrace.trying(sourceLabel, request.getFileName(),
+                    nextCandidate, candidates.size(), position, total);
             try {
                 URL url = new URL(candidate);
                 String requiredScheme = url.getProtocol();
@@ -182,25 +185,24 @@ public final class FallbackHttpClient implements HttpClient {
                             throw new IOException("Invalid or excessive model redirects");
                         }
                         URL redirected = new URL(url, location);
-                        ModelDownloadLog.record("HTTP " + code + "，跳转到 " + redirected.getHost(), candidate);
                         disconnectTransport();
                         url = redirected;
                         continue;
                     }
                     validateResponse(code);
+                    DownloadTrace.connected(sourceLabel, code);
                     stream = connection.getInputStream();
                     if (firstETag == null) firstETag = connection.getHeaderField("ETag");
-                    ModelDownloadLog.record("已连接，HTTP " + code + "，开始传输", candidate);
                     return;
                 }
             } catch (IOException e) {
                 lastFailure = e;
-                ModelDownloadLog.record("失败：" + e.getClass().getSimpleName() + " - " + e.getMessage() + "；尝试下一个来源", candidate);
+                DownloadTrace.failed(sourceLabel, e.getClass().getSimpleName() + ": " + e.getMessage());
                 checkActive();
             }
         }
         disconnectTransport();
-        ModelDownloadLog.record("所有来源均不可用，请手动导入模型", request.getUrl());
+        DownloadTrace.state("所有模型下载来源均失败；请切换来源或使用本地文件导入");
         throw new IOException("All model download sources failed", lastFailure);
     }
 
@@ -284,12 +286,23 @@ public final class FallbackHttpClient implements HttpClient {
                         if (count > total - position) throw corrupt("Model response exceeded its size");
                         if (digest != null) digest.update(buffer, offset, count);
                         position += count;
-                        if (position == total) verifyDigest();
+                        DownloadTrace.transferred(position, total);
+                        if (position == total) {
+                            verifyDigest();
+                            DownloadTrace.state("模型传输完成：" + request.getFileName());
+                        } else if (position / (8L * 1024 * 1024)
+                                > (position - count) / (8L * 1024 * 1024)) {
+                            DownloadTrace.record("已收取 " + (position / (1024 * 1024))
+                                    + " MiB / " + (total / (1024 * 1024)) + " MiB");
+                        }
                         return count;
                     } catch (IntegrityException e) {
                         throw e;
                     } catch (IOException e) {
                         if (request.getStatus() == Status.PAUSED) return 0;
+                        DownloadTrace.failed(DownloadSourceOrder.label(
+                                candidates.get(Math.max(0, nextCandidate - 1))),
+                                e.getClass().getSimpleName() + ": " + e.getMessage());
                         checkActive();
                         try {
                             openNextSource();

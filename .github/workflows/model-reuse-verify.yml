@@ -1,0 +1,130 @@
+name: Verify model reuse repair (no unsafe upgrade release)
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/meeting-model-reuse]
+    paths: ['.ci/model-reuse.patch.xz', '.github/workflows/model-reuse-verify.yml']
+permissions:
+  contents: read
+concurrency:
+  group: model-reuse-repair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'reknottycat/RTranslator' && github.ref == 'refs/heads/fix/meeting-model-reuse'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Preserve the integrated source on the repair branch
+        run: |
+          set -euo pipefail
+          if test -f .ci/model-reuse.patch.xz; then
+            git fetch --depth=1 origin cc37a0d6dd3a1d005e1081772cccded7c4ef2756
+            python3 - <<'PY'
+          import pathlib, subprocess, lzma, hashlib
+          source='cc37a0d6dd3a1d005e1081772cccded7c4ef2756'
+          prefix='app/src/main/java/nie/translator/rtranslator/downloader/'
+          files=[prefix+n for n in ['ChunkedModelDownloader.java','DownloadTrace.java','Downloader.java','DownloaderService.java','FallbackHttpClient.java','LocalModelFiles.java','ModelDownloadManifest.java','VerifiedModelMirrors.java']]
+          files += ['app/src/main/res/layout/fragment_download.xml','app/src/main/res/values-zh-rCN/strings.xml','app/src/main/res/values/strings.xml']
+          files += ['app/src/test/java/nie/translator/rtranslator/downloader/'+n for n in ['ChunkedModelDownloaderTest.java','ChunkedTransportIntegrationTest.java','FallbackHttpClientTest.java','PickedModelStageTest.java']]
+          files += ['docs/MODELSCOPE_INTEGRATION.md','reports/verified-modelscope.json']
+          subprocess.run(['git','restore','--source='+source,'--staged','--worktree','--']+files,check=True)
+          patch=lzma.decompress(pathlib.Path('.ci/model-reuse.patch.xz').read_bytes())
+          assert hashlib.sha256(patch).hexdigest()=='62c6447a7ef496b3ccd958484c6e20f8a890fa0537872b827f633593e2f02c8a'
+          pathlib.Path('/tmp/model-reuse.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check','/tmp/model-reuse.patch'],check=True)
+          subprocess.run(['git','apply','/tmp/model-reuse.patch'],check=True)
+          PY
+            git rm .ci/model-reuse.patch.xz
+            git add app tools docs reports
+            git diff --cached --check
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: restore verified ModelScope downloads, shared-folder import and stable CN identity'
+            git push origin HEAD:refs/heads/fix/meeting-model-reuse
+          fi
+          mkdir -p app/build/verification
+          git rev-parse HEAD > app/build/verification/source-commit.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Install pinned Android tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - uses: actions/cache@v4
+        with:
+          path: app/.cxx
+          key: model-reuse-native-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**','.gitmodules') }}
+          restore-keys: |
+            conversation-native-${{ runner.os }}-
+      - name: Recheck exact ModelScope resources from the cloud network
+        id: source_probe
+        continue-on-error: true
+        run: python3 tools/verify_cn_model_sources.py
+      - name: Run download, import and meeting tests then build ARM64
+        run: |
+          set -euo pipefail
+          bash ./gradlew --no-daemon --max-workers=2 -PconversationBuild=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee model-reuse-build.log
+      - name: Verify test counts and unchanged CN package identity
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob,pathlib,xml.etree.ElementTree as ET,json
+          suites=[ET.parse(p).getroot() for p in glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml')]
+          assert suites, 'No tests ran'
+          totals={k:sum(int(s.get(k,'0')) for s in suites) for k in ['tests','failures','errors','skipped']}
+          assert totals['tests'] >= 65 and totals['failures'] == totals['errors'] == totals['skipped'] == 0,totals
+          lint=ET.parse('app/build/reports/lint-results-debug.xml').getroot()
+          errors=[i for i in lint.findall('issue') if i.get('severity') in ['Error','Fatal']]
+          new=[i for i in errors if any(loc.get('file','').endswith('/ModelFileImporter.java') or loc.get('file','').endswith('/DownloadSourceOrder.java') for loc in i.findall('location'))]
+          assert not new, [ET.tostring(i).decode() for i in new]
+          pathlib.Path('app/build/verification/test-summary.json').write_text(json.dumps({'tests':totals,'total_lint_errors':len(errors),'new_import_or_source_lint_errors':len(new)},indent=2))
+          print(totals)
+          PY
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$APK" > app/build/verification/candidate-signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" > app/build/verification/apk-badging.txt
+          grep "package: name='nie.translator.rtranslator.cn'" app/build/verification/apk-badging.txt
+          grep "versionCode='32'" app/build/verification/apk-badging.txt
+          sha256sum "$APK" > app/build/verification/VALIDATION-APK-SHA256
+      - name: Check the legacy signer and explicitly block unsafe upgrade publication
+        run: |
+          set -euo pipefail
+          OLD="$RUNNER_TEMP/legacy-modelscope.apk"
+          curl -fL --retry 2 --connect-timeout 15 --max-time 180 'https://github.com/reknottycat/RTranslator/releases/download/cn-v3.0.0-beta2.3-ms-cc37a0d6/RTranslator-3.0.0-beta2-cn.3-modelscope-arm64.apk' -o "$OLD"
+          echo "3c53cc8cfa354e19052fe5123650d758821412258f6ebf18629d7e4a7e9dcd82  $OLD" | sha256sum -c -
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$OLD" > app/build/verification/legacy-signature.txt
+          python3 - <<'PY'
+          import pathlib,re,json
+          root=pathlib.Path('app/build/verification')
+          def cert(path):
+              m=re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-f]+)',path.read_text())
+              assert m,'Certificate unavailable'
+              return m.group(1)
+          old=cert(root/'legacy-signature.txt'); new=cert(root/'candidate-signature.txt')
+          data={'application_id':'nie.translator.rtranslator.cn','legacy_cert_sha256':old,'validation_cert_sha256':new,'certificates_match':old==new,'published':False,'reason':'Validation-only build. No compatible private signing key has been verified for publication. Do not uninstall the old app.'}
+          (root/'upgrade-gate.json').write_text(json.dumps(data,indent=2))
+          print(json.dumps(data,indent=2))
+          PY
+          rm -f "$OLD"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-reuse-repair-evidence
+          path: |
+            model-reuse-build.log
+            app/build/reports/
+            app/build/test-results/
+            app/build/verification/
+          retention-days: 30
+          if-no-files-found: warn

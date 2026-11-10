@@ -218,6 +218,7 @@ public class Downloader {
         }
         ModelDownloadManifest.Entry entry = ModelDownloadManifest.forUrl(info.getUrl());
         if (!localFileChecked[index] && entry != null) {
+            DownloadTrace.state("检查可导入的本地模型：" + info.getName());
             localFileChecked[index] = true;
             final long attempt = generation;
             importThread = new Thread(() -> {
@@ -238,11 +239,15 @@ public class Downloader {
                     if (importThread == finished) importThread = null;
                     if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
                     if (error != null) {
+                        DownloadTrace.state("本地模型导入失败：" + info.getName()
+                                + "；" + error.getMessage());
                         failDownload(index, GENERAL_ERROR);
                     } else if (imported) {
+                        DownloadTrace.state("已从本地导入模型：" + info.getName());
                         importedLocally[index] = true;
                         onFileDownloaded(index);
                     } else {
+                        DownloadTrace.record("本地未找到有效文件，开始联网下载：" + info.getName());
                         startNetworkDownload(index);
                     }
                 });
@@ -292,8 +297,64 @@ public class Downloader {
         }
     }
 
+    private void startChunkedDownload(int index, DownloadInfo info,
+                                      ModelDownloadManifest.Entry entry) {
+        if (importThread != null || !downloadsStarted) return;
+        final long attempt = generation;
+        final int parallelism = DownloadSourceOrder.parallelThreads(context);
+        downloadGroupInfo.setRunningDownloadIndex(index);
+        info.setCurrentError(-1);
+        DownloadTrace.state("启动高速分块下载：" + info.getName()
+                + " · 4 MiB/块 · " + parallelism + " 路并发");
+        importThread = new Thread(() -> {
+            IOException failure = null;
+            final java.util.concurrent.atomic.AtomicLong lastUpdate =
+                    new java.util.concurrent.atomic.AtomicLong(0);
+            try {
+                new ChunkedModelDownloader().download(info.getUrl(),
+                        new File(info.getDestinationCompletePath()), entry, parallelism,
+                        (bytes, total) -> {
+                            long now = android.os.SystemClock.elapsedRealtime();
+                            if (bytes != total && now - lastUpdate.get() < 300) return;
+                            lastUpdate.set(now);
+                            mainHandler.post(() -> {
+                                if (!isActive(attempt, index)) return;
+                                int overall = calculateTotalProgress(lastDownloadSuccessIndex,
+                                        bytes / 1000);
+                                int partial = (int) Math.min(100, bytes * 100 / total);
+                                downloadGroupInfo.setCurrentProgress(overall);
+                                info.setCurrentProgress(partial);
+                                callback.onProgress(downloadGroupInfo, info,
+                                        overall, partial, false, false);
+                            });
+                        });
+            } catch (IOException error) {
+                failure = error;
+            }
+            final IOException stopped = failure;
+            final Thread finishing = Thread.currentThread();
+            mainHandler.post(() -> {
+                if (importThread == finishing) importThread = null;
+                if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
+                if (stopped == null) {
+                    onFileDownloaded(index);
+                } else {
+                    DownloadTrace.state("分块下载失败：" + stopped.getMessage());
+                    failDownload(index, GENERAL_ERROR);
+                }
+            });
+        }, "model-range-download");
+        importThread.start();
+    }
+
     private void startNetworkDownload(int index){
         if (!downloadsStarted) return;
+        DownloadInfo info = downloadGroupInfo.downloadsInfo[index];
+        ModelDownloadManifest.Entry entry = ModelDownloadManifest.forUrl(info.getUrl());
+        if (entry != null && entry.sizeBytes >= ChunkedModelDownloader.MIN_PARALLEL_BYTES) {
+            startChunkedDownload(index, info, entry);
+            return;
+        }
         downloadGroupInfo.setRunningDownloadIndex(index);
         downloadGroupInfo.getRunningDownload().setCurrentError(-1);
         int downloadId = downloadGroupInfo.downloadsInfo[index].getDownloadId();
@@ -309,6 +370,7 @@ public class Downloader {
         // canonical ID/DB checkpoint and fresh callbacks, rather than reusing stale listeners.
         final long attempt = generation;
         networkActive = true;
+        DownloadTrace.record("发起下载：" + downloadGroupInfo.downloadsInfo[index].getName());
         //start the download from scratch or resume it after the app has been restarted
         downloadId = PRDownloader.download(downloadGroupInfo.downloadsInfo[index].getUrl(), downloadGroupInfo.downloadsInfo[index].getDestinationPath(), downloadGroupInfo.downloadsInfo[index].getName())
                 .build()
@@ -362,6 +424,8 @@ public class Downloader {
                         activeNetworkDownloadId = -1;
                         if (finishPausedOperation(attempt) || !isActive(attempt, index)) return;
                         Log.e("download error", (downloadGroupInfo.getRunningDownload() != null ? downloadGroupInfo.getRunningDownload().getName() : "") + "    " + error.toString());
+                        DownloadTrace.state("下载已停止：" + downloadGroupInfo.downloadsInfo[index].getName()
+                                + "；" + error.toString());
                         int runningDownloadIndex = downloadGroupInfo.getRunningDownloadIndex();
                         if(runningDownloadIndex != -1 && !downloadGroupInfo.getRunningDownload().isDownloadCompleted()) {
                             DownloadInfo download = downloadGroupInfo.downloadsInfo[runningDownloadIndex];

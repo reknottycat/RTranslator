@@ -267,7 +267,7 @@ public class FallbackHttpClientTest {
                 "https://github.com/niedev/OnnxModelsEnhancer/releases/download/v1.0.0-beta/HY-MT.zip");
         assertEquals(1926506894L, hy.sizeBytes);
         assertNotNull(hy.sha256);
-        assertNull(ModelDownloadManifest.forUrl(
+        assertNotNull(ModelDownloadManifest.forUrl(
                 "https://github.com/niedev/RTranslator/releases/download/2.0.0/Whisper_initializer.onnx").sha256);
     }
 }
