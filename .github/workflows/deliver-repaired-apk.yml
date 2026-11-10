@@ -1,0 +1,162 @@
+name: Deliver repaired CN test APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/meeting-model-reuse]
+    paths: ['.github/workflows/deliver-repaired-apk.yml']
+permissions:
+  contents: read
+concurrency:
+  group: deliver-repaired-cn-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  SOURCE_SHA: 9d2fe82d47f7f8d4e208b49b495acc4dfadfb19e
+  APK_NAME: RTranslator-3.0.0-beta2-cn.4-meeting-repair.1-arm64-test.apk
+jobs:
+  build:
+    if: github.repository == 'reknottycat/RTranslator' && github.ref == 'refs/heads/fix/meeting-model-reuse'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Install pinned Android tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - uses: actions/cache@v4
+        with:
+          path: app/.cxx
+          key: model-reuse-native-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**','.gitmodules') }}
+      - name: Test, lint and build the actual repaired ARM64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          bash ./gradlew --no-daemon --max-workers=2 -PconversationBuild=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee delivery-build.log
+      - name: Verify binary, test results and installation warning
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery/evidence
+          cp app/build/outputs/apk/debug/app-debug.apk "delivery/$APK_NAME"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "delivery/$APK_NAME" > delivery/evidence/apk-signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "delivery/$APK_NAME" > delivery/evidence/apk-badging.txt
+          grep "package: name='nie.translator.rtranslator.cn'" delivery/evidence/apk-badging.txt
+          grep "versionCode='32'" delivery/evidence/apk-badging.txt
+          grep "versionName='3.0.0-beta2-cn.4-meeting-repair.1'" delivery/evidence/apk-badging.txt
+          git rev-parse HEAD > delivery/evidence/source-commit.txt
+          git submodule status --recursive > delivery/evidence/submodules.txt
+          python3 - <<'PY'
+          import glob, json, os, pathlib, re, zipfile, xml.etree.ElementTree as ET
+          root = pathlib.Path('delivery')
+          suites = [ET.parse(p).getroot() for p in glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml')]
+          totals = {k: sum(int(s.get(k, '0')) for s in suites) for k in ['tests','failures','errors','skipped']}
+          assert totals['tests'] >= 65 and totals['failures'] == totals['errors'] == totals['skipped'] == 0, totals
+          lint = ET.parse('app/build/reports/lint-results-debug.xml').getroot()
+          errors = [i for i in lint.findall('issue') if i.get('severity') in ['Error','Fatal']]
+          cert_text = (root/'evidence/apk-signature.txt').read_text()
+          match = re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-f]+)', cert_text)
+          assert match, 'Signer digest missing'
+          legacy = '0f4c9a7b219ba3cf7d1be7c8eaa785b76e6f04dce58309c430465f8ea5b1838c'
+          apk = root/os.environ['APK_NAME']
+          with zipfile.ZipFile(apk) as archive:
+              abis = sorted({name.split('/')[1] for name in archive.namelist() if name.startswith('lib/') and name.endswith('.so')})
+          assert abis == ['arm64-v8a'], abis
+          data = {'source_sha':os.environ['SOURCE_SHA'], 'tests':totals, 'lint_error_count':len(errors), 'abis':abis, 'package':'nie.translator.rtranslator.cn', 'version_code':32, 'version_name':'3.0.0-beta2-cn.4-meeting-repair.1', 'apk_bytes':apk.stat().st_size, 'signer_sha256':match.group(1), 'legacy_cn3_signer_sha256':legacy, 'legacy_cn3_signer_matches':match.group(1)==legacy, 'build_type':'debug test only', 'device_acceptance':False}
+          (root/'evidence/build-summary.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(data,ensure_ascii=False,indent=2))
+          PY
+          cat > delivery/INSTALL-FIRST.txt <<'NOTICE'
+          RTranslator CN 修复测试包 / repaired test APK
+          版本：3.0.0-beta2-cn.4-meeting-repair.1；包名：nie.translator.rtranslator.cn。
+          保留单机双语字幕、蓝牙会议；恢复魔搭优先下载、分块续传、下载日志、原始模型文件/文件夹导入。
+
+          重要：这是调试签名测试包，不是已经验证可保留旧数据的覆盖升级包。
+          旧版 cn.3-modelscope 使用了不同的临时签名。签名不兼容时 Android 会拒绝覆盖安装。
+          不要为安装此测试包卸载旧版或清除旧版数据；否则可能丢失已下载模型。
+          没有安装同包名旧版的设备可以新安装测试。旧数据迁移/兼容签名仍待解决。
+          官方版和 .cn.meeting 包名不同，不会被本 APK 覆盖。
+          有原始模型文件时，从 Download/RTranslator-models 或实际保存目录导入 .onnx/.zip；ZIP 不要解压。
+          别的应用私有目录不等于 Download；系统文件选择器不能读取旧应用的内部私有模型。
+          真机收音、蓝牙多人、存储迁移与大陆运营商下载尚未验收。
+          NOTICE
+          (cd delivery && sha256sum "$APK_NAME" > SHA256SUMS)
+          cp docs/MODEL_REUSE_REPAIR.md delivery/evidence/
+          cp docs/LIVE_CONVERSATION.md delivery/evidence/
+          cp app/build/reports/lint-results-debug.xml delivery/evidence/
+          cp app/build/test-results/testDebugUnitTest/TEST-*.xml delivery/evidence/
+          (cd delivery/evidence && zip -q -r ../verification.zip .)
+      - name: Upload installable test APK before publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: repaired-cn-test-apk
+          path: |
+            delivery/*.apk
+            delivery/SHA256SUMS
+            delivery/INSTALL-FIRST.txt
+            delivery/verification.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repaired-cn-delivery-evidence
+          path: |
+            delivery-build.log
+            delivery/evidence/
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: warn
+          retention-days: 30
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: repaired-cn-test-apk
+          path: delivery
+      - name: Publish explicitly labelled test prerelease, never clobber a prior APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd delivery
+          sha256sum -c SHA256SUMS
+          TAG="cn-v3.0.0-beta2-meeting-repair.1-test-${GITHUB_RUN_ID}"
+          cat > RELEASE-NOTES.md <<'NOTES'
+          ## 修复版 APK（调试签名测试包）
+          已包含：单机双语字幕、蓝牙会议、原 CN 包名、魔搭优先下载、4 MiB 分块续传、下载来源日志、模型文件/文件夹导入。
+
+          **这不是旧 CN 版的无损覆盖升级包。** 旧 cn.3-modelscope 的临时签名与本测试构建不兼容时，系统会拒绝覆盖安装。请保留旧版及模型，不要为了安装而卸载旧应用或清除数据。可在没有安装同包名旧版的设备新安装测试。
+
+          原包名 `nie.translator.rtranslator.cn`，versionCode 32，Android 9+，ARM64。未改成新的会议包名。安装前请阅读附件 INSTALL-FIRST.txt。
+
+          Tests and native APK/signature verification are automated; physical-device model migration, speech accuracy, Bluetooth meeting stability and mainland-carrier download speeds are not acceptance-tested. This prerelease does not resolve legacy signing-key continuity.
+          NOTES
+          printf '\nSource commit: `%s`\nBuild: https://github.com/%s/actions/runs/%s\n\n' "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> RELEASE-NOTES.md
+          cat SHA256SUMS >> RELEASE-NOTES.md
+          gh release create "$TAG" "$APK_NAME" SHA256SUMS INSTALL-FIRST.txt verification.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title 'RTranslator CN 修复版 APK · 会议 + 魔搭 · 签名不兼容旧版时不可覆盖' \
+            --notes-file RELEASE-NOTES.md --prerelease --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets,tagName
