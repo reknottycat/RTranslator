@@ -31,7 +31,7 @@ public class DeviceProbeTest {
         verifySha(new File(dir,"metadata.json"),"90ef472b3f24ebd695a82d66f8c851b924e89f50c5dbbd827c84d31775a795af");
         verifySha(new File(dir,"decoder.bin"),"076cd7b4a5dc0c3b9958dd839d104d02e247e1ae36b7aaa7f53cf1adae891b10");
         verifySha(new File(dir,"encoder.onnx"),"fa4ba753f87f60dd59ab822558b6eb2e1813b146db89856a9e7dff4db3b71aeb");
-        JSONObject meta = new JSONObject(Files.readString(new File(dir,"metadata.json").toPath()));
+        JSONObject meta = new JSONObject(new String(Files.readAllBytes(new File(dir,"metadata.json").toPath()),java.nio.charset.StandardCharsets.UTF_8));
         assertEquals("whisper_small_quantized",meta.getString("model_id"));
         String result = NativeProbe.run(dir.getAbsolutePath(),c.getApplicationInfo().nativeLibraryDir,
                 new File(c.getFilesDir(),"qnn-profile").getAbsolutePath());
@@ -39,11 +39,11 @@ public class DeviceProbeTest {
         report.put("hardware_qnn_verified",false);
         report.put("device",Build.MODEL); report.put("soc",Build.SOC_MODEL);
         report.put("socManufacturer",Build.SOC_MANUFACTURER);
-        Files.writeString(new File(c.getExternalFilesDir(null),"qnn-result.json").toPath(),report.toString(2));
+        Files.write(new File(c.getExternalFilesDir(null),"qnn-result.json").toPath(),report.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assertTrue(result,report.getBoolean("ok"));
         // Require actual QNN node execution, not merely an installed provider.
         for(String name:new String[]{"encoder","decoder"}) {
-            JSONArray events = new JSONArray(Files.readString(new File(report.getJSONObject(name).getString("profile")).toPath()));
+            JSONArray events = new JSONArray(new String(Files.readAllBytes(new File(report.getJSONObject(name).getString("profile")).toPath()),java.nio.charset.StandardCharsets.UTF_8));
             boolean executed=false;
             for(int i=0;i<events.length();i++) {
                 JSONObject args=events.getJSONObject(i).optJSONObject("args");
@@ -52,6 +52,6 @@ public class DeviceProbeTest {
             assertTrue(name+" has no QNN execution evidence",executed);
         }
         report.put("hardware_qnn_verified",true);
-        Files.writeString(new File(c.getExternalFilesDir(null),"qnn-result.json").toPath(),report.toString(2));
+        Files.write(new File(c.getExternalFilesDir(null),"qnn-result.json").toPath(),report.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 }

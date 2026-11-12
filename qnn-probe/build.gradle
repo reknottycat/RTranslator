@@ -2,6 +2,7 @@ apply plugin: 'com.android.application'
 configurations { ortNative }
 android {
     namespace 'nie.translator.rtranslator.qnnprobe'
+    packagingOptions { jniLibs { useLegacyPackaging true } }
     compileSdk 36
     ndkVersion '28.0.12674087'
     defaultConfig {

@@ -79,6 +79,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_nie_translator_rtranslator_qnnprobe_Na
     try {
         const std::string root=str(env,pack), backend=str(env,libs)+"/libQnnHtp.so", profile=str(env,prefix);
         Ort::Env ort(ORT_LOGGING_LEVEL_WARNING, "rtranslator-qnn-probe");
+        ort.DisableTelemetryEvents();
         auto encoder = run_component(ort, root+"/encoder.onnx", backend, profile+"-encoder");
         auto decoder = run_component(ort, root+"/decoder.onnx", backend, profile+"-decoder");
         std::string result="{\"ok\":true,\"speech_recognition_tested\":false,\"encoder\":"+encoder+",\"decoder\":"+decoder+"}";

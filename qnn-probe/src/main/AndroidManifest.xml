@@ -1,4 +1,9 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- No network, microphone, storage-wide access, or UI takeover. -->
-    <application android:label="RTranslator QNN qualification" android:allowBackup="false" android:extractNativeLibs="true" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <!-- Remove permissions/initializer contributed by the upstream ORT AAR. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <application android:label="RTranslator QNN qualification" android:allowBackup="false" android:extractNativeLibs="true">
+        <provider android:name="ai.onnxruntime.TelemetryInitializer" tools:node="remove" />
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+    </application>
 </manifest>
