@@ -233,5 +233,6 @@
     <string name="cn_import_completed">模型文件导入成功</string>
     <string name="cn_import_failed">模型导入失败，请查看日志</string>
     <string name="cn_parallelism_choose">并发下载速度</string>
+    <string name="offline_tts_missing">没有已安装的%1$s离线语音。请在文字转语音设置中选择离线引擎并下载该语言。不会联网朗读。</string>
 </resources>
 

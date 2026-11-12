@@ -33,6 +33,8 @@ import java.util.Set;
 public class TTS {
     //object
     private TextToSpeech tts;
+    private volatile boolean initialized;
+    private boolean languageReady;
 
     //Attributes used for getting the supported languages
     private static Thread getSupportedLanguageThread;
@@ -77,6 +79,7 @@ public class TTS {
                             listener.onInit();
                         }
                         return;*/
+                        initialized = true;
                         listener.onInit();
                         return; // Set TTS to the default TTS directly.
                     }
@@ -89,11 +92,11 @@ public class TTS {
     }
 
     public boolean isActive() {
-        return tts != null;
+        return initialized && tts != null;
     }
 
     public int speak(CharSequence text, int queueMode, Bundle params, String utteranceId) {
-        if (isActive()) {
+        if (isActive() && languageReady && isOfflineInstalled(tts.getVoice())) {
             return tts.speak(text, queueMode, params, utteranceId);
         }
         return TextToSpeech.ERROR;
@@ -122,11 +125,40 @@ public class TTS {
         return TextToSpeech.ERROR;
     }
 
+    public static boolean isOfflineInstalled(Voice voice) {
+        return voice != null && !voice.isNetworkConnectionRequired()
+                && (voice.getFeatures() == null || !voice.getFeatures().contains(
+                        TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED));
+    }
+
     public int setLanguage(CustomLocale loc, Context context) {
-        if (isActive()) {
-            return tts.setLanguage(new Locale(loc.getLocale().getLanguage()));
+        languageReady = false; // Never speak the previous language after a failed switch.
+        if (!isActive() || loc == null) return TextToSpeech.ERROR;
+        Voice best = null;
+        int bestScore = -1;
+        Set<Voice> voices = tts.getVoices();
+        if (voices != null) {
+            for (Voice voice : voices) {
+                if (voice == null) continue;
+                int score = OfflineVoicePolicy.score(loc.getLocale(), voice.getLocale(),
+                        voice.isNetworkConnectionRequired(), !isOfflineInstalled(voice), voice.getQuality());
+                if (score > bestScore || (score == bestScore && score >= 0 && best != null
+                        && voice.getName().compareTo(best.getName()) < 0)) {
+                    best = voice;
+                    bestScore = score;
+                }
+            }
         }
-        return TextToSpeech.ERROR;
+        if (best != null && tts.setVoice(best) == TextToSpeech.SUCCESS) {
+            languageReady = true;
+            return TextToSpeech.LANG_AVAILABLE;
+        }
+        // Do not fall back to a network voice or silently read Russian with another locale.
+        new android.os.Handler(Looper.getMainLooper()).post(() ->
+                android.widget.Toast.makeText(context.getApplicationContext(),
+                        context.getString(nie.translator.rtranslator.R.string.offline_tts_missing,
+                                loc.getLocale().getDisplayLanguage()), android.widget.Toast.LENGTH_LONG).show());
+        return TextToSpeech.LANG_MISSING_DATA;
     }
 
     public int stop() {
@@ -137,8 +169,10 @@ public class TTS {
     }
 
     public void shutdown() {
-        if (isActive()) {
+        if (tts != null) {
             tts.shutdown();
+            initialized = false;
+            languageReady = false;
         }
     }
 
@@ -209,11 +243,12 @@ public class TTS {
                     } else {
                         quality = Voice.QUALITY_NORMAL;
                     }
+                    ttsLanguages.clear();
                     boolean foundLanguage = false; // if there is available languages
                     if (set != null) {
                         // we filter the languages that have a tts that reflects the quality characteristics we want
                         for (Voice aSet : set) {
-                            if (aSet.getQuality() >= quality && (qualityLow || !aSet.getFeatures().contains("legacySetLanguageVoice"))) {
+                            if (isOfflineInstalled(aSet) && aSet.getQuality() >= quality) {
                                 CustomLocale language;
                                 if(aSet.getLocale() != null){
                                     language = new CustomLocale(aSet.getLocale()); // Use .getLocale() for google
@@ -223,7 +258,7 @@ public class TTS {
                                     foundLanguage = true;
                                 }
 
-                                ttsLanguages.add(language);
+                                if (!CustomLocale.containsLanguage(ttsLanguages, language)) ttsLanguages.add(language);
                             }
                         }
                     }

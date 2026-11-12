@@ -254,4 +254,5 @@
     <string name="cn_import_completed">Local model files imported</string>
     <string name="cn_import_failed">Model import failed; see logs</string>
     <string name="cn_parallelism_choose">Parallel download speed</string>
+    <string name="offline_tts_missing">No installed offline voice for %1$s. Open Text to speech settings, choose an offline engine and install this language. Audio is not sent online.</string>
 </resources>

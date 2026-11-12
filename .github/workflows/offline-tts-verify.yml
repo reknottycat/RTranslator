@@ -1,0 +1,37 @@
+name: Verify offline TTS (validation only)
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/whisper-backend-offline-tts]
+permissions:
+  contents: read
+concurrency:
+  group: offline-tts-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - name: Unit tests and validation build, never publish an upgrade
+        run: bash ./gradlew --no-daemon --max-workers=2 -PconversationBuild=true :app:testDebugUnitTest :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-tts-test-results
+          path: |
+            app/build/test-results/
+            app/build/reports/tests/

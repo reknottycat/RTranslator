@@ -104,7 +104,7 @@ public class TTSEngine {
 
             @Override
             public void onError(int reason) {
-
+                if (listener != null) listener.onInitError(reason);
             }
         });
         this.listener = listener;
@@ -132,11 +132,11 @@ public class TTSEngine {
             if (pair != null && tts != null) {
                 if(listener != null) listener.onUtteranceStarting(pair.first, !wasSpeaking);
                 executingMessage = pair;
-                if (tts.getVoice() != null && pair.second.equals(new CustomLocale(tts.getVoice().getLocale()))) {
-                    tts.speak(pair.first.getMessage().getText(), queueMode, null, String.valueOf(pair.first.getMessageID()));
-                } else {
-                    tts.setLanguage(pair.second, context);
-                    tts.speak(pair.first.getMessage().getText(), queueMode, null, String.valueOf(pair.first.getMessageID()));
+                if (tts.setLanguage(pair.second, context) < TextToSpeech.LANG_AVAILABLE
+                        || tts.speak(pair.first.getMessage().getText(), queueMode, null,
+                                String.valueOf(pair.first.getMessageID())) == TextToSpeech.ERROR) {
+                    stop(); // Complete the UI/microphone lifecycle even on synchronous failure.
+                    return false;
                 }
                 return true;
             }else{

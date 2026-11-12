@@ -790,10 +790,7 @@ public class TranslationFragment extends Fragment {
 
     public void speak(String text, CustomLocale language) {
         if (tts != null && tts.isActive()) {
-            if (tts.getVoice() != null && language.equals(new CustomLocale(tts.getVoice().getLocale()))) {
-                tts.speak(text, TextToSpeech.QUEUE_ADD, null, "c01");
-            } else {
-                tts.setLanguage(language, activity);
+            if (tts.setLanguage(language, activity) >= TextToSpeech.LANG_AVAILABLE) {
                 tts.speak(text, TextToSpeech.QUEUE_ADD, null, "c01");
             }
         }
