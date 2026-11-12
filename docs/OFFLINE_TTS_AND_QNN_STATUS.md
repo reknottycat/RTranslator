@@ -91,3 +91,19 @@ uses official Maven ORT-QNN and QAIRT runtimes, native UINT16 tensor handling,
 synthetic encoder/decoder runs and actual QNN profile-node assertions. It must
 not be described as a finished recognizer. The real app's CPU ASR is unchanged.
 Runtime/license and exact device-test instructions are in `qnn-probe/README.md`.
+
+## Verified upstream streaming limitation (2026-11-12)
+
+The official `whisper_small/model.py` declares `streaming=False`, `file_based=True`,
+`language_detection=True` and `confidence_scores=False`. Source inspected:
+https://github.com/qualcomm/ai-hub-models/blob/main/src/qai_hub_models/models/whisper_small/model.py
+Source blob SHA: `07f8e6725bce6ac594f1aee0edfcda27aa61275d`.
+
+Chunked or sliding-window near-real-time transcription is an application strategy,
+not evidence that this model supports native streaming. Language-detection support
+also does not prove our integration selects the correct language. Before accepting
+the real device path, verify Russian/Chinese language tokens and tokenizer mapping,
+audio resampling/log-mel preprocessing and quantization, actual QNN/NPU execution,
+and initialization/runtime-failure recovery to the existing CPU backend. Neither
+successful APK compilation nor a synthetic QNN probe establishes those gates.
+This is a record-only update; no new tests or device actions were started.
