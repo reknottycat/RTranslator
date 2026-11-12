@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(qnn_probe)
+add_library(ort SHARED IMPORTED)
+set_target_properties(ort PROPERTIES IMPORTED_LOCATION "${ORT_DIR}/jni/arm64-v8a/libonnxruntime.so")
+add_library(qnn_probe SHARED probe.cpp)
+target_include_directories(qnn_probe PRIVATE "${ORT_DIR}/headers")
+target_link_libraries(qnn_probe ort log)

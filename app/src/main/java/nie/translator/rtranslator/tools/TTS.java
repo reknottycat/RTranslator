@@ -32,9 +32,9 @@ import java.util.Set;
 
 public class TTS {
     //object
-    private TextToSpeech tts;
+    private volatile TextToSpeech tts;
     private volatile boolean initialized;
-    private boolean languageReady;
+    private volatile boolean languageReady;
 
     //Attributes used for getting the supported languages
     private static Thread getSupportedLanguageThread;
@@ -43,52 +43,64 @@ public class TTS {
     private static final ArrayList<CustomLocale> ttsLanguages = new ArrayList<>();
 
 
-    public TTS(Context context, final InitListener listener) {
-        tts = new TextToSpeech(context, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS) {
-                    /*List<EngineInfo> engineInfos=TTS.this.getEngines();   //method 1
-                    boolean found=false;
-                    for (int i=0;i<engineInfos.size() && !found;i++){
-                        if(engineInfos.get(i).name.equals("com.google.android.tts")){
-                            found=true;
-                        }
-                    }*/
+    // Independent installed engines may cover different languages. No system setting is changed.
+    private final java.util.List<TextToSpeech> allEngines = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.List<TextToSpeech> readyEngines = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final android.os.Handler initHandler = new android.os.Handler(Looper.getMainLooper());
+    private final java.util.concurrent.atomic.AtomicBoolean initReported = new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile boolean closed;
+    private volatile UtteranceProgressListener progressListener;
 
-                    /*boolean found = false;*/    //method 2
-                    if (tts != null) {
-                        /*ArrayList<TextToSpeech.EngineInfo> engines = new ArrayList<>(tts.getEngines());
-                        for (int i = 0; i < engines.size() && !found; i++) {
-                            switch (engines.get(i).name) {
-                                case "com.google.android.tts":
-                                    found = true; // Check Google TTS here.
-                                    break;
-                                case "com.samsung.SMT": // Check Samsung TTS here.
-                                    found = true;
-                                    break;
-                                case "com.huawei.hiai": // Check Huawei TTS here.
-                                    found = true;
-                                    break;
-                            }
-                        } // Look forward to supporting more TTS engine.
-                        if (!found) {
-                            tts = null;
-                            listener.onError(ErrorCodes.MISSING_GOOGLE_TTS);
-                        } else {
-                            listener.onInit();
-                        }
-                        return;*/
-                        initialized = true;
-                        listener.onInit();
-                        return; // Set TTS to the default TTS directly.
-                    }
-                }
-                tts = null;
+    public TTS(Context context, final InitListener listener) {
+        final Context app = context.getApplicationContext();
+        final Runnable finish = () -> {
+            if (closed || !initReported.compareAndSet(false, true)) return;
+            initialized = !readyEngines.isEmpty();
+            if (initialized) {
+                tts = readyEngines.get(0);
+                listener.onInit();
+            } else {
+                shutdown();
                 listener.onError(ErrorCodes.GOOGLE_TTS_ERROR);
             }
-        },
-        null);// use default TTS when this is null
+        };
+        // Android service binding is asynchronous. Delay callbacks to the main loop so
+        // constructor assignments are complete even for a very fast local engine.
+        tts = new TextToSpeech(app, status -> initHandler.post(() -> {
+            if (closed) return;
+            TextToSpeech primary = tts;
+            if (status == TextToSpeech.SUCCESS && primary != null) readyEngines.add(primary);
+            java.util.List<TextToSpeech.EngineInfo> installed = primary == null
+                    ? java.util.Collections.emptyList() : primary.getEngines();
+            String defaultPackage = primary == null ? null : primary.getDefaultEngine();
+            java.util.List<String> alternatives = new java.util.ArrayList<>();
+            if (installed != null) for (TextToSpeech.EngineInfo info : installed) {
+                if (info.name != null && !info.name.equals(defaultPackage)) alternatives.add(info.name);
+            }
+            java.util.Collections.sort(alternatives);
+            if (alternatives.isEmpty()) { finish.run(); return; }
+            java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger(alternatives.size());
+            for (String packageName : alternatives) {
+                final TextToSpeech[] holder = new TextToSpeech[1];
+                try {
+                    holder[0] = new TextToSpeech(app, result -> initHandler.post(() -> {
+                        if (closed) return;
+                        TextToSpeech engine = holder[0];
+                        if (result == TextToSpeech.SUCCESS && engine != null) {
+                            if (progressListener != null) engine.setOnUtteranceProgressListener(progressListener);
+                            readyEngines.add(engine);
+                        }
+                        if (pending.decrementAndGet() == 0) finish.run();
+                    }), packageName);
+                    allEngines.add(holder[0]);
+                } catch (RuntimeException failure) {
+                    if (pending.decrementAndGet() == 0) finish.run();
+                }
+            }
+        }), null);
+        allEngines.add(tts);
+        // A broken installed service must not prevent another offline engine from working.
+        initHandler.postDelayed(finish, 8000);
     }
 
     public boolean isActive() {
@@ -112,17 +124,22 @@ public class TTS {
 
     @Nullable
     public Set<Voice> getVoices() {
-        if (isActive()) {
-            return tts.getVoices();
+        if (!isActive()) return null;
+        Set<Voice> voices = new java.util.HashSet<>();
+        for (TextToSpeech engine : readyEngines) {
+            Set<Voice> available = engine.getVoices();
+            if (available != null) voices.addAll(available);
         }
-        return null;
+        return voices;
     }
 
     public int setOnUtteranceProgressListener(UtteranceProgressListener listener) {
-        if (isActive()) {
-            return tts.setOnUtteranceProgressListener(listener);
+        progressListener = listener;
+        int result = TextToSpeech.ERROR;
+        for (TextToSpeech engine : readyEngines) {
+            if (engine.setOnUtteranceProgressListener(listener) == TextToSpeech.SUCCESS) result = TextToSpeech.SUCCESS;
         }
-        return TextToSpeech.ERROR;
+        return result;
     }
 
     public static boolean isOfflineInstalled(Voice voice) {
@@ -134,24 +151,30 @@ public class TTS {
     public int setLanguage(CustomLocale loc, Context context) {
         languageReady = false; // Never speak the previous language after a failed switch.
         if (!isActive() || loc == null) return TextToSpeech.ERROR;
-        Voice best = null;
-        int bestScore = -1;
-        Set<Voice> voices = tts.getVoices();
-        if (voices != null) {
-            for (Voice voice : voices) {
-                if (voice == null) continue;
-                int score = OfflineVoicePolicy.score(loc.getLocale(), voice.getLocale(),
-                        voice.isNetworkConnectionRequired(), !isOfflineInstalled(voice), voice.getQuality());
-                if (score > bestScore || (score == bestScore && score >= 0 && best != null
-                        && voice.getName().compareTo(best.getName()) < 0)) {
-                    best = voice;
-                    bestScore = score;
+        // Preserve the default engine if it has a suitable offline voice, then
+        // try other installed engines (e.g. Kokoro zh/en plus Piper Russian).
+        for (TextToSpeech engine : readyEngines) {
+            Set<Voice> available = engine.getVoices();
+            if (available == null) continue;
+            java.util.List<Voice> candidates = new java.util.ArrayList<>();
+            for (Voice voice : available) {
+                if (isOfflineInstalled(voice) && OfflineVoicePolicy.score(loc.getLocale(),
+                        voice.getLocale(), false, false, voice.getQuality()) >= 0) candidates.add(voice);
+            }
+            candidates.sort((left, right) -> {
+                int byScore = Integer.compare(
+                    OfflineVoicePolicy.score(loc.getLocale(), right.getLocale(), false, false, right.getQuality()),
+                    OfflineVoicePolicy.score(loc.getLocale(), left.getLocale(), false, false, left.getQuality()));
+                return byScore != 0 ? byScore : left.getName().compareTo(right.getName());
+            });
+            for (Voice voice : candidates) {
+                if (engine.setVoice(voice) == TextToSpeech.SUCCESS) {
+                    if (tts != engine && tts != null) tts.stop();
+                    tts = engine;
+                    languageReady = true;
+                    return TextToSpeech.LANG_AVAILABLE;
                 }
             }
-        }
-        if (best != null && tts.setVoice(best) == TextToSpeech.SUCCESS) {
-            languageReady = true;
-            return TextToSpeech.LANG_AVAILABLE;
         }
         // Do not fall back to a network voice or silently read Russian with another locale.
         new android.os.Handler(Looper.getMainLooper()).post(() ->
@@ -169,11 +192,13 @@ public class TTS {
     }
 
     public void shutdown() {
-        if (tts != null) {
-            tts.shutdown();
-            initialized = false;
-            languageReady = false;
-        }
+        closed = true;
+        initHandler.removeCallbacksAndMessages(null);
+        initialized = false;
+        languageReady = false;
+        for (TextToSpeech engine : allEngines) engine.shutdown();
+        readyEngines.clear();
+        allEngines.clear();
     }
 
     public static void getSupportedLanguages(Context context, SupportedLanguagesListener responseListener){

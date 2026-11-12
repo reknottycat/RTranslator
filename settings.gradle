@@ -1,1 +1,3 @@
 include ':app'
+// Isolated qualification APK; never replaces the user's RTranslator installation.
+if (providers.gradleProperty('qnnProbe').orNull == 'true') include ':qnn-probe'

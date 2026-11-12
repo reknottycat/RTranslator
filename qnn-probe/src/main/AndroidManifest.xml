@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- No network, microphone, storage-wide access, or UI takeover. -->
+    <application android:label="RTranslator QNN qualification" android:allowBackup="false" android:extractNativeLibs="true" />
+</manifest>

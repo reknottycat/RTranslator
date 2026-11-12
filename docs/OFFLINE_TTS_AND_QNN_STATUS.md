@@ -76,3 +76,18 @@ is inferred. Latest Chinese chaowen needs the g2pW frontend; existing SherpaTTS'
 simple ONNX+tokens import does not establish compatibility. The independent engine
 approach avoids copying GPL runtime into this app. Model-specific notices remain
 mandatory; the Chinese Hi-Fi TTS base needs attribution.
+
+## Android integration follow-up
+
+The application now discovers installed Android TTS engines, prefers a matching
+installed offline voice from the default engine, and falls back to another
+installed engine for unsupported languages without changing system defaults.
+This permits the official Kokoro Chinese/English engine plus an independent
+Russian engine. It does not automatically install either APK or voice packs.
+Initialization has an eight-second bound; playback listeners follow the engines.
+
+An isolated `qnn-probe` Android module builds a distinct qualification APK. It
+uses official Maven ORT-QNN and QAIRT runtimes, native UINT16 tensor handling,
+synthetic encoder/decoder runs and actual QNN profile-node assertions. It must
+not be described as a finished recognizer. The real app's CPU ASR is unchanged.
+Runtime/license and exact device-test instructions are in `qnn-probe/README.md`.
