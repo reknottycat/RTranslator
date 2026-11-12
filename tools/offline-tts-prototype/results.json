@@ -1,0 +1,35 @@
+[
+  {
+    "model": "zh_CN-chaowen-medium",
+    "load_sec": 1.0478275599998597,
+    "synthesis_sec": 1.3535186199987947,
+    "duration_sec": 5.224489795918367,
+    "rms": 5067.061340300002,
+    "nonzero_samples": 107307,
+    "rtf": 0.2590719233591443
+  },
+  {
+    "model": "ru_RU-denis-medium",
+    "text": "Здравствуйте! Это проверка русского голоса. Перевод работает без интернета.",
+    "load_sec": 0.9020769150010892,
+    "synthesis_sec": 0.22452920700015966,
+    "duration_sec": 6.025578231292517,
+    "rtf": 0.037262682249168476,
+    "rms": 4789.51669170892,
+    "peak": 32767.0,
+    "nonzero_samples": 126267,
+    "file": "/tmp/rtranslator-tts-audit/ru_RU-denis-medium.wav"
+  },
+  {
+    "model": "en_US-norman-medium",
+    "text": "Hello. This is an offline English speech test. The translation is ready.",
+    "load_sec": 1.3530281839994132,
+    "synthesis_sec": 0.14793596699746558,
+    "duration_sec": 4.713650793650793,
+    "rtf": 0.03138458351576082,
+    "rms": 4086.9835568640506,
+    "peak": 32767.0,
+    "nonzero_samples": 102783,
+    "file": "/tmp/rtranslator-tts-audit/en_US-norman-medium.wav"
+  }
+]

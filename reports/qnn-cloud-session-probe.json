@@ -1,0 +1,1 @@
+{"ok": false, "inference_tested": false, "error": "QNNExecutionProvider absent: CPU is NOT a successful NPU test"}

@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feat/whisper-backend-offline-tts]
+    paths: ['app/**', 'gradle/**', '*.gradle', 'gradle.properties']
 permissions:
   contents: read
 concurrency:

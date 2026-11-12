@@ -1,0 +1,20 @@
+[
+  {
+    "file": "vocab.txt",
+    "url": "https://huggingface.co/google-bert/bert-base-chinese/resolve/main/vocab.txt",
+    "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
+    "note": "Original test bytes pinned by SHA256; revision API timed out. Download aborts if main changes."
+  },
+  {
+    "file": "tokenizer_config.json",
+    "url": "https://huggingface.co/google-bert/bert-base-chinese/resolve/main/tokenizer_config.json",
+    "sha256": "0f6d13e6f4da6f9e24f22ada6bc3be571123d858d7c0c05a8a7cd55a9c23c2e8",
+    "note": "Original test bytes pinned by SHA256; revision API timed out. Download aborts if main changes."
+  },
+  {
+    "file": "config.json",
+    "url": "https://huggingface.co/google-bert/bert-base-chinese/resolve/main/config.json",
+    "sha256": "88af762cfb15fa9ce183c84dcbfdc9d635196ba635dfe81f265fdd21d67f4c4c",
+    "note": "Original test bytes pinned by SHA256; revision API timed out. Download aborts if main changes."
+  }
+]

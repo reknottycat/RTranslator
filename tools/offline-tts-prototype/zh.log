@@ -1,0 +1,4 @@
+[0;93m2026-11-12 11:49:42.494477156 [W:onnxruntime:Default, telemetry_1ds.cc:600 operator()] Failed to persist telemetry device ID; using an in-memory identifier[m
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+chunks 2
+{'model': 'zh_CN-chaowen-medium', 'load_sec': 1.0478275599998597, 'synthesis_sec': 1.3535186199987947, 'duration_sec': 5.224489795918367, 'rms': 5067.061340300002, 'nonzero_samples': 107307}

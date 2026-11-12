@@ -1,0 +1,23 @@
+[
+  {
+    "file": "zh_CN-chaowen-medium.wav",
+    "samples": 115200,
+    "full_scale_samples": 0,
+    "full_scale_fraction": 0.0,
+    "definition": "exactly +32767 or -32768; indicator only, not perceptual clipping judgment"
+  },
+  {
+    "file": "en_US-norman-medium.wav",
+    "samples": 103936,
+    "full_scale_samples": 3,
+    "full_scale_fraction": 2.8863916256157634e-05,
+    "definition": "exactly +32767 or -32768; indicator only, not perceptual clipping judgment"
+  },
+  {
+    "file": "ru_RU-denis-medium.wav",
+    "samples": 132864,
+    "full_scale_samples": 2,
+    "full_scale_fraction": 1.5052986512524085e-05,
+    "definition": "exactly +32767 or -32768; indicator only, not perceptual clipping judgment"
+  }
+]

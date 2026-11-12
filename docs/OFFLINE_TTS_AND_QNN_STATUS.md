@@ -56,3 +56,23 @@ return-from-system-settings/restart behavior; existing conversation regressions.
 No connected phone was assumed and no data was removed. Existing APK signer
 mismatch remains an upgrade blocker: do not uninstall or clear data to install a
 validation APK. No release is published by this workflow.
+
+## Follow-up: official precompiled package inspected
+
+The Maven version observation is not a universal runtime blocker. Qualcomm's
+v0.66.0 release supplies an ORT1.30 / QAIRT2.50 precompiled QNN Whisper Small pack.
+It has been downloaded and its actual fixed-shape, quantized signatures checked.
+See `tools/qnn/README.md` and `reports/qnn-whisper-pack-inspection.json`. The new
+probe qualifies package structure and can test QNN session loading on a suitable
+host; it is not an implemented RTranslator speech backend or a hardware benchmark.
+
+## Follow-up: real isolated three-language synthesis
+
+`tools/offline-tts-prototype` contains pinned model manifests, downloaded license
+cards and rerunnable scripts (no model binaries). Linux CPU Piper 1.8 generated
+non-silent Chinese/Russian/English WAVs: 5.22/6.03/4.71 seconds of audio in
+1.35/0.225/0.148 seconds respectively. No listening-quality or Android acceptance
+is inferred. Latest Chinese chaowen needs the g2pW frontend; existing SherpaTTS's
+simple ONNX+tokens import does not establish compatibility. The independent engine
+approach avoids copying GPL runtime into this app. Model-specific notices remain
+mandatory; the Chinese Hi-Fi TTS base needs attribution.

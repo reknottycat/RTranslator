@@ -1,0 +1,61 @@
+[0;93m2026-11-12 11:48:01.249732189 [W:onnxruntime:Default, telemetry_1ds.cc:600 operator()] Failed to persist telemetry device ID; using an in-memory identifier[m
+# Model card for 超文 (chaowen, medium)
+
+* Language: zh_CN (Chinese, China)
+* Speakers: 1
+* Quality: medium
+* Samplerate: 22,050Hz
+
+## Dataset
+
+* URL: https://github.com/OHF-Voice/voice-datasets
+* License:  CC0
+
+## Training
+
+Finetuned from the U.S. English hifi_tts_92 base model (medium quality; the voice of Cori Samuel, Hi-Fi TTS reader 92), with MRD and SDP.
+Phonemes are pinyin (`phoneme_type: pinyin`), produced with the g2pW model.
+
+Requires Piper 1.5 or higher.
+
+{"model": "zh_CN-chaowen-medium", "error": "# channels not specified"}
+# Model card for denis (medium)
+
+* Language: ru_RU (Russian, Russia)
+* Speakers: 1
+* Quality: medium
+* Samplerate: 22,050Hz
+
+## Dataset
+
+* URL: https://github.com/OHF-Voice/voice-datasets
+* License: CC0
+
+## Training
+
+Finetuned from the rdh base model (medium quality; nl_BE, one Flemish speaker, CC0), with MRD and SDP.
+
+Default inference settings are noise_scale 0.5 and noise_w 0.333.
+
+Requires Piper 1.5 or higher.
+
+{"model": "ru_RU-denis-medium", "text": "\u0417\u0434\u0440\u0430\u0432\u0441\u0442\u0432\u0443\u0439\u0442\u0435! \u042d\u0442\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0440\u0443\u0441\u0441\u043a\u043e\u0433\u043e \u0433\u043e\u043b\u043e\u0441\u0430. \u041f\u0435\u0440\u0435\u0432\u043e\u0434 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442 \u0431\u0435\u0437 \u0438\u043d\u0442\u0435\u0440\u043d\u0435\u0442\u0430.", "load_sec": 0.9020769150010892, "synthesis_sec": 0.22452920700015966, "duration_sec": 6.025578231292517, "rtf": 0.037262682249168476, "rms": 4789.51669170892, "peak": 32767.0, "nonzero_samples": 126267, "file": "/tmp/rtranslator-tts-audit/ru_RU-denis-medium.wav"}
+# Model card for norman (medium)
+
+* Language: en_US (English, United States)
+* Speakers: 1
+* Quality: medium
+* Samplerate: 22,050Hz
+
+## Dataset
+
+* URL: https://librivox.org
+* License: public domain
+
+## Training
+
+See: https://brycebeattie.com/files/tts/
+
+US English male voice. Single Speaker. Trained from scratch on medium quality settings for 1200 epochs. I put together the dataset, which ended up with about 15.5 hours of recordings. All recordings came from LibriVox.org. I forgot to save the ckpt file on this one, sorry.
+
+{"model": "en_US-norman-medium", "text": "Hello. This is an offline English speech test. The translation is ready.", "load_sec": 1.3530281839994132, "synthesis_sec": 0.14793596699746558, "duration_sec": 4.713650793650793, "rtf": 0.03138458351576082, "rms": 4086.9835568640506, "peak": 32767.0, "nonzero_samples": 102783, "file": "/tmp/rtranslator-tts-audit/en_US-norman-medium.wav"}
