@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feat/whisper-backend-offline-tts]
-    paths: ['app/**', 'gradle/**', '*.gradle', 'gradle.properties']
+    paths: ['app/**', 'gradle/**', '*.gradle', 'gradle.properties', '.github/workflows/offline-tts-verify.yml']
 permissions:
   contents: read
 concurrency:
@@ -36,3 +36,19 @@ jobs:
           path: |
             app/build/test-results/
             app/build/reports/tests/
+      - name: Package verified test APK and evidence
+        run: |
+          set -euo pipefail
+          mkdir -p delivery
+          cp app/build/outputs/apk/debug/app-debug.apk delivery/RTranslator-offline-TTS-test.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs delivery/RTranslator-offline-TTS-test.apk | tee delivery/signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging delivery/RTranslator-offline-TTS-test.apk > delivery/badging.txt
+          git rev-parse HEAD > delivery/source-commit.txt
+          cp docs/OFFLINE_TTS_AND_QNN_STATUS.md delivery/
+          (cd delivery && sha256sum *.apk > SHA256SUMS)
+          printf '%s\n' 'TEST APK: offline installed TTS engine routing; existing CPU ASR. No production QNN backend. Not hardware validated. Debug signer may not match installed app. Do not uninstall or clear data to install. Offline voice engines/models must be installed separately.' > delivery/INSTALL-FIRST.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-offline-TTS-test-apk
+          path: delivery/
+          if-no-files-found: error
