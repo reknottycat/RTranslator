@@ -4,5 +4,9 @@
     <application>
         <provider android:name="ai.onnxruntime.TelemetryInitializer" tools:node="remove" />
         <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <service
+            android:name="nie.translator.rtranslator.voice_translation.neural_networks.voice.QnnWhisperService"
+            android:exported="false"
+            android:process=":qnn" />
     </application>
 </manifest>
