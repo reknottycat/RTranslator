@@ -12,4 +12,13 @@
     <string name="qnn_whisper_active">Latest supported recognition completed with Qualcomm NPU.</string>
     <string name="qnn_whisper_cpu_fallback">Latest supported recognition fell back to CPU.</string>
     <string name="qnn_whisper_no_browser">No browser is available to open the model download.</string>
+    <string name="mtk_whisper_title">MediaTek Whisper (NPU test)</string>
+    <string name="mtk_whisper_download">Download Dimensity 9400 Whisper Tiny model</string>
+    <string name="mtk_whisper_import">Import downloaded .tflite model</string>
+    <string name="mtk_whisper_import_failed">Import failed. Select the complete MediaTek MT6991 model and check storage space. %1$s</string>
+    <string name="mtk_whisper_no_model">CPU. Download the MediaTek Whisper Tiny model, then import it here.</string>
+    <string name="mtk_whisper_other_device">MediaTek NPU testing requires a device identified as MT6991.</string>
+    <string name="mtk_whisper_waiting">Model imported. MediaTek NPU compatibility is pending the next supported recognition request.</string>
+    <string name="mtk_whisper_active">Latest supported recognition used the MediaTek NPU.</string>
+    <string name="mtk_whisper_cpu_fallback">Latest supported recognition fell back to CPU.</string>
 </resources>
