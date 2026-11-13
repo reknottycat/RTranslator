@@ -12,4 +12,13 @@
     <string name="qnn_whisper_active">最近一次受支持的语音识别已在高通 NPU 上完成。</string>
     <string name="qnn_whisper_cpu_fallback">最近一次受支持的语音识别已回退到 CPU。</string>
     <string name="qnn_whisper_no_browser">找不到可打开模型下载链接的浏览器。</string>
+    <string name="mtk_whisper_title">联发科 Whisper（NPU 测试）</string>
+    <string name="mtk_whisper_download">下载天玑 9400 Whisper Tiny 模型</string>
+    <string name="mtk_whisper_import">导入已下载的 .tflite 模型</string>
+    <string name="mtk_whisper_import_failed">导入失败。请选择完整的联发科 MT6991 模型，并检查剩余存储空间。%1$s</string>
+    <string name="mtk_whisper_no_model">当前使用 CPU。下载联发科 Whisper Tiny 模型后在这里导入。</string>
+    <string name="mtk_whisper_other_device">联发科 NPU 测试需要系统识别为 MT6991 的设备。</string>
+    <string name="mtk_whisper_waiting">模型已导入。下次运行受支持的语音识别时将尝试联发科 NPU。</string>
+    <string name="mtk_whisper_active">最近一次受支持的语音识别使用了联发科 NPU。</string>
+    <string name="mtk_whisper_cpu_fallback">最近一次受支持的语音识别已回退到 CPU。</string>
 </resources>
