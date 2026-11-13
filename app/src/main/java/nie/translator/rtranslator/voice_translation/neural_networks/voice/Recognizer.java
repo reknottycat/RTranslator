@@ -380,7 +380,9 @@ public class Recognizer extends NeuralNetworkApi {
                 qnnWorker = Executors.newSingleThreadExecutor(r -> new Thread(r, "whisper-qnn"));
             }
             work = qnnWorker.submit(() -> transcribeOnAccelerator(pack, mediatek, features, firstToken, secondToken));
-            QnnTokens tokens = work.get(pack.equals(verifiedQnnPack) ? 4 : 10, TimeUnit.SECONDS);
+            boolean warm = pack.equals(verifiedQnnPack);
+            int timeoutSeconds = mediatek ? (warm ? 8 : 15) : (warm ? 4 : 10);
+            QnnTokens tokens = work.get(timeoutSeconds, TimeUnit.SECONDS);
             String first = qnnText(tokens.first);
             String second = tokens.second == null ? null : qnnText(tokens.second);
             verifiedQnnPack = pack;
