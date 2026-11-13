@@ -222,6 +222,7 @@ dependencies {
         qnnOrtNative "${androidOrt}@aar"
     }
     if (mediatekWhisperTest) {
+        compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
         implementation 'com.google.ai.edge.litert:litert:2.3.0'
         implementation 'com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.0'
     }
