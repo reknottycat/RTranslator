@@ -231,7 +231,8 @@ dependencies {
     implementation group: 'com.nimbusds', name: 'nimbus-jose-jwt', version: '5.1'
     implementation files('libs/sqlite4java-android-release.aar')
     //Room library (database)
-    def room_version = '2.1.0'
+    // LiteRT's Android delivery dependency selects Room 2.5.0 through WorkManager.
+    def room_version = mediatekWhisperTest ? '2.5.0' : '2.1.0'
     implementation "androidx.room:room-runtime:$room_version"
     annotationProcessor "androidx.room:room-compiler:$room_version" // use kapt for Kotlin
     // optional - RxJava support for Room
