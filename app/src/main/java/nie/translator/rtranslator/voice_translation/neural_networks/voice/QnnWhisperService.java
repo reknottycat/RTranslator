@@ -26,6 +26,7 @@ public final class QnnWhisperService extends Service {
     static final int FEATURE_COUNT = 80 * 3000;
     static final int FEATURE_BYTES = FEATURE_COUNT * Float.BYTES;
     static final String PACK = "pack";
+    static final String MEDIATEK = "mediatek";
     static final String FEATURES = "features";
     static final String LANGUAGE = "language";
     static final String TOKENS = "tokens";
@@ -35,7 +36,7 @@ public final class QnnWhisperService extends Service {
     private Messenger messenger;
     private HandlerThread inferenceThread;
     private Handler inference;
-    private QnnWhisperBackend backend;
+    private AcceleratedWhisperBackend backend;
 
     @Override
     public void onCreate() {
@@ -81,7 +82,7 @@ public final class QnnWhisperService extends Service {
         try {
             Bundle input = request.getData();
             if (request.what == OPEN) {
-                open(input.getString(PACK));
+                open(input.getString(PACK), input.getBoolean(MEDIATEK));
             } else if (request.what == RECOGNIZE) {
                 recognize(input, result);
             } else {
@@ -103,13 +104,13 @@ public final class QnnWhisperService extends Service {
         }
     }
 
-    private void open(String path) throws IOException {
-        File active = QnnModelPack.activeDirectory(this);
+    private void open(String path, boolean mediatek) throws IOException {
+        File active = mediatek ? MediaTekModelPack.activeFile(this) : QnnModelPack.activeDirectory(this);
         if (path == null || active == null || !active.getCanonicalFile().equals(new File(path).getCanonicalFile())) {
-            throw new IOException("The active Qualcomm Whisper model changed");
+            throw new IOException("The active Whisper accelerator model changed");
         }
         closeBackend();
-        backend = QnnWhisperBackend.load(this, active);
+        backend = mediatek ? MediaTekWhisperBackend.load(this, active) : QnnWhisperBackend.load(this, active);
     }
 
     private void closeBackend() {
