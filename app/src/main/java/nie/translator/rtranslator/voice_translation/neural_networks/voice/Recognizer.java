@@ -186,7 +186,7 @@ public class Recognizer extends NeuralNetworkApi {
     private OrtSession detokenizerSession;
     private OrtEnvironment onnxEnv;
     private ExecutorService qnnWorker;
-    private QnnWhisperBackend qnnBackend;
+    private QnnWhisperServiceClient qnnBackend;
     private File qnnPack;
     private File failedQnnPack;
     private File verifiedQnnPack;
@@ -399,11 +399,11 @@ public class Recognizer extends NeuralNetworkApi {
         return null;
     }
 
-    // This worker owns the native handle. Never close it from the CPU recognition thread.
+    // Keep the Qualcomm connection on a single worker, separate from CPU recognition.
     private QnnTokens transcribeOnQnn(File pack, float[] features, int firstToken, int secondToken) throws IOException {
         if (!pack.equals(qnnPack)) {
             closeQnnBackend();
-            qnnBackend = QnnWhisperBackend.load(global, pack);
+            qnnBackend = QnnWhisperServiceClient.load(global, pack);
             qnnPack = pack;
         }
         double[] firstScore = new double[1];
