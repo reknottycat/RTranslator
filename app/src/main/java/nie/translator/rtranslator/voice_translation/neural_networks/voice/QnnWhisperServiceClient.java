@@ -28,6 +28,7 @@ import java.util.concurrent.TimeoutException;
 /** Makes bounded requests to the private Qualcomm Whisper service from a worker. */
 final class QnnWhisperServiceClient implements AutoCloseable {
     private final Context app;
+    private final int inferenceTimeoutSeconds;
     private final CompletableFuture<Messenger> connection = new CompletableFuture<>();
     private final Messenger replies = new Messenger(new Handler(Looper.getMainLooper(), this::handleReply));
     private final ServiceConnection service = new ServiceConnection() {
@@ -57,12 +58,13 @@ final class QnnWhisperServiceClient implements AutoCloseable {
     private boolean bound;
     private boolean disconnected;
 
-    private QnnWhisperServiceClient(Context context) {
+    private QnnWhisperServiceClient(Context context, boolean mediatek) {
         app = context.getApplicationContext();
+        inferenceTimeoutSeconds = mediatek ? 10 : 5;
     }
 
     static QnnWhisperServiceClient load(Context context, File pack, boolean mediatek) throws IOException {
-        QnnWhisperServiceClient client = new QnnWhisperServiceClient(context);
+        QnnWhisperServiceClient client = new QnnWhisperServiceClient(context, mediatek);
         boolean opened = false;
         try {
             client.bound = client.app.bindService(new Intent(client.app, QnnWhisperService.class),
@@ -94,7 +96,7 @@ final class QnnWhisperServiceClient implements AutoCloseable {
             Bundle input = new Bundle();
             input.putParcelable(QnnWhisperService.FEATURES, memory);
             input.putInt(QnnWhisperService.LANGUAGE, languageToken);
-            Bundle output = request(QnnWhisperService.RECOGNIZE, input, 5);
+            Bundle output = request(QnnWhisperService.RECOGNIZE, input, inferenceTimeoutSeconds);
             int[] tokens = output.getIntArray(QnnWhisperService.TOKENS);
             score[0] = output.getDouble(QnnWhisperService.SCORE, Double.NaN);
             if (tokens == null || !Double.isFinite(score[0])) {
