@@ -47,6 +47,7 @@ import nie.translator.rtranslator.Global;
 import nie.translator.rtranslator.R;
 import nie.translator.rtranslator.tools.ErrorCodes;
 import nie.translator.rtranslator.tools.GalleryImageSelector;
+import nie.translator.rtranslator.voice_translation.neural_networks.voice.MediaTekModelPack;
 import nie.translator.rtranslator.voice_translation.neural_networks.voice.QnnModelPack;
 
 
@@ -74,6 +75,9 @@ public class SettingsFragment extends PreferenceFragmentCompat {
     private Preference qnnModelPreference;
     private ActivityResultLauncher<String[]> qnnModelPicker;
     private final Runnable refreshQnnModel = this::updateQnnModelSummary;
+    private Preference mediaTekModelPreference;
+    private ActivityResultLauncher<String[]> mediaTekModelPicker;
+    private final Runnable refreshMediaTekModel = this::updateMediaTekModelSummary;
 
     private Handler selfHandler = new Handler(new Handler.Callback() {
         @Override
@@ -119,7 +123,12 @@ public class SettingsFragment extends PreferenceFragmentCompat {
         super.onCreate(savedInstanceState);
         // Load the preferences from an XML resource
         addPreferencesFromResource(R.xml.preferences);
-        if (BuildConfig.QNN_WHISPER_TEST) addQnnModelPreference();
+        if (BuildConfig.QNN_WHISPER_TEST && (!BuildConfig.MEDIATEK_WHISPER_TEST || !MediaTekModelPack.isSupportedDevice())) {
+            addQnnModelPreference();
+        }
+        if (BuildConfig.MEDIATEK_WHISPER_TEST && (MediaTekModelPack.isSupportedDevice() || !QnnModelPack.isQualcommDevice())) {
+            addMediaTekModelPreference();
+        }
     }
 
     private void addQnnModelPreference() {
@@ -156,11 +165,7 @@ public class SettingsFragment extends PreferenceFragmentCompat {
                                 "application/octet-stream"});
                     } else {
                         String url = which == 0 ? QnnModelPack.ELITE_DOWNLOAD : QnnModelPack.ELITE_GEN5_DOWNLOAD;
-                        try {
-                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                        } catch (ActivityNotFoundException e) {
-                            Toast.makeText(requireContext(), R.string.qnn_whisper_no_browser, Toast.LENGTH_LONG).show();
-                        }
+                        openModelDownload(url);
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -199,6 +204,83 @@ public class SettingsFragment extends PreferenceFragmentCompat {
         String text = getString(summary);
         if (QnnModelPack.importFailed()) text = getString(R.string.qnn_whisper_import_failed, text);
         qnnModelPreference.setSummary(text);
+    }
+
+    private void addMediaTekModelPreference() {
+        mediaTekModelPicker = registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
+            if (uri != null) {
+                MediaTekModelPack.startImport(requireContext(), uri);
+                updateMediaTekModelSummary();
+            }
+        });
+        mediaTekModelPreference = new Preference(requireContext());
+        mediaTekModelPreference.setKey("mediaTekWhisperModel");
+        mediaTekModelPreference.setTitle(R.string.mtk_whisper_title);
+        mediaTekModelPreference.setIconSpaceReserved(false);
+        mediaTekModelPreference.setOnPreferenceClickListener(preference -> {
+            showMediaTekModelChoices();
+            return true;
+        });
+        Preference modelsManager = findPreference("modelsManager");
+        modelsManager.getParent().addPreference(mediaTekModelPreference);
+        updateMediaTekModelSummary();
+    }
+
+    private void showMediaTekModelChoices() {
+        CharSequence[] options = {getText(R.string.mtk_whisper_download), getText(R.string.mtk_whisper_import)};
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.mtk_whisper_title)
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) {
+                        openModelDownload(MediaTekModelPack.MODEL_DOWNLOAD);
+                    } else {
+                        mediaTekModelPicker.launch(new String[]{"*/*"});
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void openModelDownload(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(requireContext(), R.string.qnn_whisper_no_browser, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void updateMediaTekModelSummary() {
+        selfHandler.removeCallbacks(refreshMediaTekModel);
+        if (mediaTekModelPreference == null || !isAdded()) return;
+        if (!MediaTekModelPack.isSupportedDevice()) {
+            mediaTekModelPreference.setEnabled(false);
+            mediaTekModelPreference.setSummary(R.string.mtk_whisper_other_device);
+            return;
+        }
+        int progress = MediaTekModelPack.importProgress();
+        mediaTekModelPreference.setEnabled(progress < 0);
+        if (progress >= 0) {
+            mediaTekModelPreference.setSummary(getString(R.string.qnn_whisper_importing, progress));
+            selfHandler.postDelayed(refreshMediaTekModel, 500);
+            return;
+        }
+        int summary = R.string.mtk_whisper_no_model;
+        if (MediaTekModelPack.activeFile(requireContext()) != null) {
+            switch (MediaTekModelPack.backendStatus()) {
+                case MediaTekModelPack.BACKEND_NPU:
+                    summary = R.string.mtk_whisper_active;
+                    break;
+                case MediaTekModelPack.BACKEND_CPU_FALLBACK:
+                    summary = R.string.mtk_whisper_cpu_fallback;
+                    break;
+                default:
+                    summary = R.string.mtk_whisper_waiting;
+                    break;
+            }
+        }
+        String text = getString(summary);
+        if (MediaTekModelPack.importFailed()) text = getString(R.string.mtk_whisper_import_failed, text);
+        mediaTekModelPreference.setSummary(text);
     }
 
     @Override
@@ -300,11 +382,13 @@ public class SettingsFragment extends PreferenceFragmentCompat {
     public void onResume() {
         super.onResume();
         updateQnnModelSummary();
+        updateMediaTekModelSummary();
     }
 
     @Override
     public void onPause() {
         selfHandler.removeCallbacks(refreshQnnModel);
+        selfHandler.removeCallbacks(refreshMediaTekModel);
         super.onPause();
     }
 
