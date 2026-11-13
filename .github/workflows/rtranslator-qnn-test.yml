@@ -1,0 +1,120 @@
+name: Build and publish RTranslator QNN test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/rtranslator-qnn-asr-test]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle'
+      - 'gradle.properties'
+      - '.github/workflows/rtranslator-qnn-test.yml'
+
+permissions:
+  contents: read
+
+env:
+  APK_NAME: RTranslator-QNN-Whisper-ARM64-test.apk
+
+jobs:
+  build:
+    if: github.repository == 'reknottycat/RTranslator' && github.ref == 'refs/heads/feat/rtranslator-qnn-asr-test'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'ndk;28.0.12674087' 'cmake;3.22.1'
+      - name: Run unit tests and build the ARM64 QNN APK
+        run: bash ./gradlew --no-daemon --max-workers=2 -PqnnWhisperTest=true :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify APK signature, package and native runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery
+          cp app/build/outputs/apk/debug/app-debug.apk "delivery/$APK_NAME"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "delivery/$APK_NAME" > delivery/signature.txt
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "delivery/$APK_NAME" > delivery/badging.txt
+          grep -F "package: name='nie.translator.rtranslator.cn.qnn'" delivery/badging.txt
+          grep -Fx "native-code: 'arm64-v8a'" delivery/badging.txt
+          unzip -Z1 "delivery/$APK_NAME" > delivery/apk-entries.txt
+          for library in librtranslator_qnn_whisper.so libonnxruntime.so libonnxruntime_providers_qnn.so libQnnHtp.so; do
+            grep -Fx "lib/arm64-v8a/$library" delivery/apk-entries.txt
+          done
+          qnn_cache="${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1/com.qualcomm.qti/qnn-runtime/2.50.0"
+          qnn_aar=$(find "$qnn_cache" -type f -name qnn-runtime-2.50.0.aar -print -quit)
+          test -n "$qnn_aar"
+          for skel in libQnnHtpV79Skel.so libQnnHtpV81Skel.so; do
+            grep -Fx "lib/arm64-v8a/$skel" delivery/apk-entries.txt
+            expected=$(unzip -p "$qnn_aar" "jni/arm64-v8a/$skel" | sha256sum)
+            packaged=$(unzip -p "delivery/$APK_NAME" "lib/arm64-v8a/$skel" | sha256sum)
+            test "$expected" = "$packaged"
+          done
+          unzip -p "$qnn_aar" LICENSE.pdf > delivery/Qualcomm-QNN-License.pdf
+          unzip -p "$qnn_aar" NOTICE.txt > delivery/Qualcomm-QNN-Notice.txt
+          git rev-parse HEAD > delivery/source-commit.txt
+          (cd delivery && sha256sum "$APK_NAME" > SHA256SUMS)
+      - name: Upload APK and verification files
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-QNN-Whisper-ARM64-test
+          path: delivery/
+          if-no-files-found: error
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RTranslator-QNN-Whisper-unit-tests
+          path: app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: RTranslator-QNN-Whisper-ARM64-test
+          path: delivery
+      - name: Publish a standalone QNN test prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd delivery
+          sha256sum -c SHA256SUMS
+          test "$(cat source-commit.txt)" = "$GITHUB_SHA"
+          tag="rtranslator-qnn-asr-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cat > RELEASE-NOTES.md <<'NOTES'
+          RTranslator 高通 Hexagon NPU 语音识别测试包（ARM64，调试签名）。
+
+          - 下载 APK 即可安装，包名为 `nie.translator.rtranslator.cn.qnn`，可与现有 RTranslator 并存。测试包使用自己的模型目录。
+          - 完成测试包的基础模型设置后，打开「设置 → 常规 → 高通 Whisper（NPU 测试）」。小米 15 Pro 可试 8 Elite（Galaxy S25 目标包），小米 17 Pro 可试 8 Elite Gen 5（Galaxy S26 目标包），下载后直接导入 ZIP。小米设备兼容性仍需实测。
+          - QNN 初始化失败、运行出错、超时或进程退出时，原 CPU 语音识别重跑同一段音频。天玑 9400 在本测试包走 CPU。文本翻译和语音播报沿用现有后端。
+          - 本次验证覆盖单元测试、APK 签名、包名和原生运行库。手机 NPU 实际执行、识别质量和延迟仍需真机验证。
+          - Qualcomm QNN Runtime 许可证和声明随本版本提供。
+          NOTES
+          printf '\nSource: `%s`\n\nBuild: https://github.com/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> RELEASE-NOTES.md
+          gh release create "$tag" "$APK_NAME" SHA256SUMS signature.txt source-commit.txt \
+            Qualcomm-QNN-License.pdf Qualcomm-QNN-Notice.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title 'RTranslator · 高通 QNN 语音识别测试包' \
+            --notes-file RELEASE-NOTES.md --prerelease --latest=false
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url,assets,tagName
