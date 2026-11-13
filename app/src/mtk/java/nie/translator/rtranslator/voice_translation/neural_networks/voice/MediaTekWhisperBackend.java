@@ -62,7 +62,8 @@ final class MediaTekWhisperBackend implements AcceleratedWhisperBackend {
         boolean opened = false;
         try {
             // The AAR declares optional vendor libraries; constructing this environment has no download path.
-            environment = Environment.create(context, new BuiltinNpuAcceleratorProvider(context));
+            environment = Environment.create(context,
+                    new BuiltinNpuAcceleratorProvider(context, MediaTekModelPack::isSupportedDevice));
             if (!environment.getAvailableAccelerators().contains(Accelerator.NPU)) {
                 throw new IOException("MediaTek NPU dispatch is unavailable");
             }
