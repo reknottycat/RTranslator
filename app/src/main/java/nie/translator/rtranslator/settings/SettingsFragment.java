@@ -16,8 +16,10 @@
 
 package nie.translator.rtranslator.settings;
 
+import android.content.ActivityNotFoundException;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -27,7 +29,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ProgressBar;
+import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
@@ -37,10 +42,12 @@ import androidx.preference.PreferenceGroupAdapter;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import nie.translator.rtranslator.BuildConfig;
 import nie.translator.rtranslator.Global;
 import nie.translator.rtranslator.R;
 import nie.translator.rtranslator.tools.ErrorCodes;
 import nie.translator.rtranslator.tools.GalleryImageSelector;
+import nie.translator.rtranslator.voice_translation.neural_networks.voice.QnnModelPack;
 
 
 public class SettingsFragment extends PreferenceFragmentCompat {
@@ -64,6 +71,9 @@ public class SettingsFragment extends PreferenceFragmentCompat {
     private ShowOriginalTranscriptionMsgPreference showOriginalTranscriptionMsgPreference;
     private SupportTtsQualityPreference supportTtsQualityPreference;
     private LanguagePreference languagePreference;
+    private Preference qnnModelPreference;
+    private ActivityResultLauncher<String[]> qnnModelPicker;
+    private final Runnable refreshQnnModel = this::updateQnnModelSummary;
 
     private Handler selfHandler = new Handler(new Handler.Callback() {
         @Override
@@ -109,6 +119,86 @@ public class SettingsFragment extends PreferenceFragmentCompat {
         super.onCreate(savedInstanceState);
         // Load the preferences from an XML resource
         addPreferencesFromResource(R.xml.preferences);
+        if (BuildConfig.QNN_WHISPER_TEST) addQnnModelPreference();
+    }
+
+    private void addQnnModelPreference() {
+        qnnModelPicker = registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
+            if (uri != null) {
+                QnnModelPack.startImport(requireContext(), uri);
+                updateQnnModelSummary();
+            }
+        });
+        qnnModelPreference = new Preference(requireContext());
+        qnnModelPreference.setKey("qnnWhisperModel");
+        qnnModelPreference.setTitle(R.string.qnn_whisper_title);
+        qnnModelPreference.setIconSpaceReserved(false);
+        qnnModelPreference.setOnPreferenceClickListener(preference -> {
+            showQnnModelChoices();
+            return true;
+        });
+        Preference modelsManager = findPreference("modelsManager");
+        modelsManager.getParent().addPreference(qnnModelPreference);
+        updateQnnModelSummary();
+    }
+
+    private void showQnnModelChoices() {
+        CharSequence[] options = {
+                getText(R.string.qnn_whisper_download_elite),
+                getText(R.string.qnn_whisper_import),
+                getText(R.string.qnn_whisper_download_gen5)
+        };
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.qnn_whisper_title)
+                .setItems(options, (dialog, which) -> {
+                    if (which == 1) {
+                        qnnModelPicker.launch(new String[]{"application/zip", "application/x-zip-compressed",
+                                "application/octet-stream"});
+                    } else {
+                        String url = which == 0 ? QnnModelPack.ELITE_DOWNLOAD : QnnModelPack.ELITE_GEN5_DOWNLOAD;
+                        try {
+                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                        } catch (ActivityNotFoundException e) {
+                            Toast.makeText(requireContext(), R.string.qnn_whisper_no_browser, Toast.LENGTH_LONG).show();
+                        }
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void updateQnnModelSummary() {
+        selfHandler.removeCallbacks(refreshQnnModel);
+        if (qnnModelPreference == null || !isAdded()) return;
+        if (!QnnModelPack.isQualcommDevice()) {
+            qnnModelPreference.setEnabled(false);
+            qnnModelPreference.setSummary(R.string.qnn_whisper_other_device);
+            return;
+        }
+        int progress = QnnModelPack.importProgress();
+        qnnModelPreference.setEnabled(progress < 0);
+        if (progress >= 0) {
+            qnnModelPreference.setSummary(getString(R.string.qnn_whisper_importing, progress));
+            selfHandler.postDelayed(refreshQnnModel, 500);
+            return;
+        }
+        int summary = R.string.qnn_whisper_no_model;
+        if (QnnModelPack.activeDirectory(requireContext()) != null) {
+            switch (QnnModelPack.backendStatus()) {
+                case QnnModelPack.BACKEND_QNN:
+                    summary = R.string.qnn_whisper_active;
+                    break;
+                case QnnModelPack.BACKEND_CPU_FALLBACK:
+                    summary = R.string.qnn_whisper_cpu_fallback;
+                    break;
+                default:
+                    summary = R.string.qnn_whisper_waiting;
+                    break;
+            }
+        }
+        String text = getString(summary);
+        if (QnnModelPack.importFailed()) text = getString(R.string.qnn_whisper_import_failed, text);
+        qnnModelPreference.setSummary(text);
     }
 
     @Override
@@ -209,6 +299,13 @@ public class SettingsFragment extends PreferenceFragmentCompat {
     @Override
     public void onResume() {
         super.onResume();
+        updateQnnModelSummary();
+    }
+
+    @Override
+    public void onPause() {
+        selfHandler.removeCallbacks(refreshQnnModel);
+        super.onPause();
     }
 
     @Override
