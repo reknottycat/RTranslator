@@ -5,7 +5,7 @@ import android.content.Context;
 import java.io.File;
 import java.io.IOException;
 
-final class QnnWhisperBackend implements AutoCloseable {
+final class QnnWhisperBackend implements AcceleratedWhisperBackend {
     private final long handle;
 
     private QnnWhisperBackend(long handle) {
@@ -26,7 +26,8 @@ final class QnnWhisperBackend implements AutoCloseable {
         return new QnnWhisperBackend(handle);
     }
 
-    int[] recognize(float[] features, int languageToken, double[] score) throws IOException {
+    @Override
+    public int[] recognize(float[] features, int languageToken, double[] score) throws IOException {
         long[] tokens = transcribe(handle, features, languageToken, score);
         if (tokens == null || !Double.isFinite(score[0])) {
             throw new IOException("Invalid Qualcomm Whisper result");
