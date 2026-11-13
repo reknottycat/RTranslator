@@ -66,3 +66,12 @@ target_link_libraries(cache_container_native
 
 add_subdirectory(bergamot_translator)
 add_subdirectory(fasttext)
+
+if(DEFINED QNN_ORT_DIR)
+    add_library(qnn_ort SHARED IMPORTED)
+    set_target_properties(qnn_ort PROPERTIES
+        IMPORTED_LOCATION "${QNN_ORT_DIR}/jni/${ANDROID_ABI}/libonnxruntime.so")
+    add_library(rtranslator_qnn_whisper SHARED qnn_whisper.cpp)
+    target_include_directories(rtranslator_qnn_whisper PRIVATE "${QNN_ORT_DIR}/headers")
+    target_link_libraries(rtranslator_qnn_whisper qnn_ort log)
+endif()
