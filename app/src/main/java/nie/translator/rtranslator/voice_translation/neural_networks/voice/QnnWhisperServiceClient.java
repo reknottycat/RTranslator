@@ -61,7 +61,7 @@ final class QnnWhisperServiceClient implements AutoCloseable {
         app = context.getApplicationContext();
     }
 
-    static QnnWhisperServiceClient load(Context context, File pack) throws IOException {
+    static QnnWhisperServiceClient load(Context context, File pack, boolean mediatek) throws IOException {
         QnnWhisperServiceClient client = new QnnWhisperServiceClient(context);
         boolean opened = false;
         try {
@@ -70,6 +70,7 @@ final class QnnWhisperServiceClient implements AutoCloseable {
             if (!client.bound) throw new IOException("Could not bind the Qualcomm Whisper service");
             Bundle request = new Bundle();
             request.putString(QnnWhisperService.PACK, pack.getAbsolutePath());
+            request.putBoolean(QnnWhisperService.MEDIATEK, mediatek);
             client.request(QnnWhisperService.OPEN, request, 10);
             opened = true;
             return client;
