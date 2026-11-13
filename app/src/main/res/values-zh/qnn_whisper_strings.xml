@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qnn_whisper_title">高通 Whisper（NPU 测试）</string>
+    <string name="qnn_whisper_download_elite">下载骁龙 8 至尊版模型 ZIP（小米 15 Pro 测试用）</string>
+    <string name="qnn_whisper_download_gen5">下载第五代骁龙 8 至尊版模型 ZIP（Galaxy 导出）</string>
+    <string name="qnn_whisper_import">导入已下载的模型 ZIP</string>
+    <string name="qnn_whisper_importing">正在校验并导入模型… %1$d%%</string>
+    <string name="qnn_whisper_import_failed">导入失败。请选择完整的高通模型 ZIP，并检查剩余存储空间。%1$s</string>
+    <string name="qnn_whisper_no_model">当前使用 CPU。下载高通模型 ZIP 后在这里导入。</string>
+    <string name="qnn_whisper_other_device">此设备使用 CPU 语音识别，无法运行高通 NPU 测试。</string>
+    <string name="qnn_whisper_waiting">模型已导入。下次运行受支持的语音识别时将尝试高通 NPU。</string>
+    <string name="qnn_whisper_active">最近一次受支持的语音识别已在高通 NPU 上完成。</string>
+    <string name="qnn_whisper_cpu_fallback">最近一次受支持的语音识别已回退到 CPU。</string>
+    <string name="qnn_whisper_no_browser">找不到可打开模型下载链接的浏览器。</string>
+</resources>
