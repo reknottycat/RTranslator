@@ -353,23 +353,24 @@ public class Recognizer extends NeuralNetworkApi {
     }
 
     private QnnResult tryQnnRecognition(DataContainer data) {
-        if (!BuildConfig.QNN_WHISPER_TEST || data == null || initSession == null || detokenizerSession == null
-                || !QnnModelPack.isQualcommDevice()) {
+        if (!BuildConfig.QNN_WHISPER_TEST || data == null || initSession == null || detokenizerSession == null) {
             return null;
         }
-        File pack = QnnModelPack.activeDirectory(global);
+        boolean mediatek = BuildConfig.MEDIATEK_WHISPER_TEST && MediaTekModelPack.isSupportedDevice();
+        File pack = mediatek ? MediaTekModelPack.activeFile(global)
+                : QnnModelPack.isQualcommDevice() ? QnnModelPack.activeDirectory(global) : null;
         if (pack == null) {
             return null;
         }
         if (qnnTimedOut || pack.equals(failedQnnPack)) {
-            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+            reportAccelerator(pack, mediatek, false);
             return null;
         }
         int firstToken = getLanguageID(data.languageCode);
         int secondToken = data.languageCode2 == null ? -1 : getLanguageID(data.languageCode2);
         if (firstToken < 0 || (data.languageCode2 != null && secondToken < 0)
                 || data.data.length > 30 * Recorder.SAMPLE_RATE_CANDIDATES[0]) {
-            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+            reportAccelerator(pack, mediatek, false);
             return null;
         }
         Future<QnnTokens> work = null;
@@ -378,32 +379,43 @@ public class Recognizer extends NeuralNetworkApi {
             if (qnnWorker == null) {
                 qnnWorker = Executors.newSingleThreadExecutor(r -> new Thread(r, "whisper-qnn"));
             }
-            work = qnnWorker.submit(() -> transcribeOnQnn(pack, features, firstToken, secondToken));
+            work = qnnWorker.submit(() -> transcribeOnAccelerator(pack, mediatek, features, firstToken, secondToken));
             QnnTokens tokens = work.get(pack.equals(verifiedQnnPack) ? 4 : 10, TimeUnit.SECONDS);
             String first = qnnText(tokens.first);
             String second = tokens.second == null ? null : qnnText(tokens.second);
             verifiedQnnPack = pack;
-            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_QNN);
+            reportAccelerator(pack, mediatek, true);
             return new QnnResult(first, tokens.firstScore, second, tokens.secondScore);
         } catch (TimeoutException | InterruptedException failure) {
             if (work != null) work.cancel(true);
             qnnTimedOut = true;
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
-            Log.w("RTranslatorASR", "Qualcomm Whisper deadline exceeded, retrying with CPU", failure);
+            Log.w("RTranslatorASR", "Whisper accelerator deadline exceeded, retrying with CPU", failure);
         } catch (IOException | OrtException | ExecutionException | RuntimeException failure) {
-            Log.w("RTranslatorASR", "Qualcomm Whisper failed, retrying with CPU", failure);
+            Log.w("RTranslatorASR", "Whisper accelerator failed, retrying with CPU", failure);
             failedQnnPack = pack;
         }
         if (qnnWorker != null) qnnWorker.execute(this::closeQnnBackend);
-        QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+        reportAccelerator(pack, mediatek, false);
         return null;
     }
 
-    // Keep the Qualcomm connection on a single worker, separate from CPU recognition.
-    private QnnTokens transcribeOnQnn(File pack, float[] features, int firstToken, int secondToken) throws IOException {
+    private void reportAccelerator(File pack, boolean mediatek, boolean ranOnNpu) {
+        if (mediatek) {
+            MediaTekModelPack.reportBackend(global, pack, ranOnNpu
+                    ? MediaTekModelPack.BACKEND_NPU : MediaTekModelPack.BACKEND_CPU_FALLBACK);
+        } else {
+            QnnModelPack.reportBackend(global, pack, ranOnNpu
+                    ? QnnModelPack.BACKEND_QNN : QnnModelPack.BACKEND_CPU_FALLBACK);
+        }
+    }
+
+    // Keep the accelerator connection on a single worker, separate from CPU recognition.
+    private QnnTokens transcribeOnAccelerator(File pack, boolean mediatek, float[] features,
+                                             int firstToken, int secondToken) throws IOException {
         if (!pack.equals(qnnPack)) {
             closeQnnBackend();
-            qnnBackend = QnnWhisperServiceClient.load(global, pack);
+            qnnBackend = QnnWhisperServiceClient.load(global, pack, mediatek);
             qnnPack = pack;
         }
         double[] firstScore = new double[1];
