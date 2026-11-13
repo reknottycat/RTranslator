@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qnn_whisper_title">Qualcomm Whisper (NPU test)</string>
+    <string name="qnn_whisper_download_elite">Download 8 Elite model ZIP (Xiaomi 15 Pro candidate)</string>
+    <string name="qnn_whisper_download_gen5">Download 8 Elite Gen 5 model ZIP (Galaxy export)</string>
+    <string name="qnn_whisper_import">Import downloaded model ZIP</string>
+    <string name="qnn_whisper_importing">Verifying and importing model… %1$d%%</string>
+    <string name="qnn_whisper_import_failed">Import failed. Select the complete Qualcomm model ZIP and check storage space. %1$s</string>
+    <string name="qnn_whisper_no_model">CPU. Download the Qualcomm model ZIP, then import it here.</string>
+    <string name="qnn_whisper_other_device">This device uses CPU recognition. Qualcomm NPU testing is unavailable.</string>
+    <string name="qnn_whisper_waiting">Model imported. Qualcomm NPU compatibility is pending the next supported recognition request.</string>
+    <string name="qnn_whisper_active">Latest supported recognition completed with Qualcomm NPU.</string>
+    <string name="qnn_whisper_cpu_fallback">Latest supported recognition fell back to CPU.</string>
+    <string name="qnn_whisper_no_browser">No browser is available to open the model download.</string>
+</resources>
