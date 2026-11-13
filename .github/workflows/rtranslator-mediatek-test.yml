@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rtranslator-mediatek-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   APK_NAME: RTranslator-NPU-Qualcomm-MediaTek-ARM64-test.apk
 
