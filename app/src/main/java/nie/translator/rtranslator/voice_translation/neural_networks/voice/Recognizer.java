@@ -24,14 +24,23 @@ import android.util.Log;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
+import java.io.File;
 import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -41,6 +50,7 @@ import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 import ai.onnxruntime.extensions.OrtxPackage;
+import nie.translator.rtranslator.BuildConfig;
 import nie.translator.rtranslator.Global;
 import nie.translator.rtranslator.R;
 import nie.translator.rtranslator.tools.CustomLocale;
@@ -175,6 +185,12 @@ public class Recognizer extends NeuralNetworkApi {
     private OrtSession decoderSession;
     private OrtSession detokenizerSession;
     private OrtEnvironment onnxEnv;
+    private ExecutorService qnnWorker;
+    private QnnWhisperBackend qnnBackend;
+    private File qnnPack;
+    private File failedQnnPack;
+    private File verifiedQnnPack;
+    private boolean qnnTimedOut;
 
 
     public Recognizer(Global global, final boolean returnResultOnlyAtTheEnd, final NeuralNetworkApi.InitListener initListener) {
@@ -319,6 +335,169 @@ public class Recognizer extends NeuralNetworkApi {
     private void recognize() {
         recognizing = true;
         DataContainer data = dataToRecognize.pollFirst();
+        QnnResult qnnResult = tryQnnRecognition(data);
+        if (qnnResult != null) {
+            dispatchQnnResult(data, qnnResult);
+        } else {
+            recognizeOnCpu(data);
+        }
+        if (data != null && data.scopedCallback != null && !data.scopedCompleted) {
+            data.scopedCompleted = true;
+            data.scopedCallback.onError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
+        }
+        if (!dataToRecognize.isEmpty()) {
+            recognize();
+        } else {
+            recognizing = false;
+        }
+    }
+
+    private QnnResult tryQnnRecognition(DataContainer data) {
+        if (!BuildConfig.QNN_WHISPER_TEST || data == null || initSession == null || detokenizerSession == null
+                || !QnnModelPack.isQualcommDevice()) {
+            return null;
+        }
+        File pack = QnnModelPack.activeDirectory(global);
+        if (pack == null) {
+            return null;
+        }
+        if (qnnTimedOut || pack.equals(failedQnnPack)) {
+            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+            return null;
+        }
+        int firstToken = getLanguageID(data.languageCode);
+        int secondToken = data.languageCode2 == null ? -1 : getLanguageID(data.languageCode2);
+        if (firstToken < 0 || (data.languageCode2 != null && secondToken < 0)
+                || data.data.length > 30 * Recorder.SAMPLE_RATE_CANDIDATES[0]) {
+            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+            return null;
+        }
+        Future<QnnTokens> work = null;
+        try {
+            float[] features = qnnInputFeatures(data.data);
+            if (qnnWorker == null) {
+                qnnWorker = Executors.newSingleThreadExecutor(r -> new Thread(r, "whisper-qnn"));
+            }
+            work = qnnWorker.submit(() -> transcribeOnQnn(pack, features, firstToken, secondToken));
+            QnnTokens tokens = work.get(pack.equals(verifiedQnnPack) ? 4 : 10, TimeUnit.SECONDS);
+            String first = qnnText(tokens.first);
+            String second = tokens.second == null ? null : qnnText(tokens.second);
+            verifiedQnnPack = pack;
+            QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_QNN);
+            return new QnnResult(first, tokens.firstScore, second, tokens.secondScore);
+        } catch (TimeoutException | InterruptedException failure) {
+            if (work != null) work.cancel(true);
+            qnnTimedOut = true;
+            if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+            Log.w("RTranslatorASR", "Qualcomm Whisper deadline exceeded, retrying with CPU", failure);
+        } catch (IOException | OrtException | ExecutionException | RuntimeException failure) {
+            Log.w("RTranslatorASR", "Qualcomm Whisper failed, retrying with CPU", failure);
+            failedQnnPack = pack;
+        }
+        if (qnnWorker != null) qnnWorker.execute(this::closeQnnBackend);
+        QnnModelPack.reportBackend(global, pack, QnnModelPack.BACKEND_CPU_FALLBACK);
+        return null;
+    }
+
+    // This worker owns the native handle. Never close it from the CPU recognition thread.
+    private QnnTokens transcribeOnQnn(File pack, float[] features, int firstToken, int secondToken) throws IOException {
+        if (!pack.equals(qnnPack)) {
+            closeQnnBackend();
+            qnnBackend = QnnWhisperBackend.load(global, pack);
+            qnnPack = pack;
+        }
+        double[] firstScore = new double[1];
+        double[] secondScore = new double[]{-Double.MAX_VALUE};
+        int[] first = qnnBackend.recognize(features, firstToken, firstScore);
+        int[] second = secondToken < 0 || Thread.currentThread().isInterrupted() ? null
+                : qnnBackend.recognize(features, secondToken, secondScore);
+        return new QnnTokens(first, firstScore[0], second, secondScore[0]);
+    }
+
+    private float[] qnnInputFeatures(float[] audio) throws OrtException, IOException {
+        int samplesPerWindow = 30 * Recorder.SAMPLE_RATE_CANDIDATES[0];
+        if (audio.length > samplesPerWindow) {
+            throw new IOException("Audio exceeds the Qualcomm Whisper window");
+        }
+        // Compensate for the initializer's final frame slice using a reflected right edge.
+        float[] paddedAudio = Arrays.copyOf(audio, samplesPerWindow + 160);
+        for (int i = 0; i < 160; i++) {
+            paddedAudio[samplesPerWindow + i] = paddedAudio[samplesPerWindow - 2 - i];
+        }
+        try (OnnxTensor audioTensor = OnnxTensor.createTensor(onnxEnv, FloatBuffer.wrap(paddedAudio),
+                TensorUtils.tensorShape(1L, paddedAudio.length));
+             OrtSession.Result result = initSession.run(Collections.singletonMap("audio_pcm", audioTensor))) {
+            OnnxTensor features = (OnnxTensor) result.get(0);
+            long[] shape = features.getInfo().getShape();
+            if (!Arrays.equals(shape, new long[]{1, 80, 3000})) {
+                throw new IOException("Unexpected Whisper log-mel input shape");
+            }
+            float[] values = new float[80 * 3000];
+            features.getFloatBuffer().get(values);
+            return values;
+        }
+    }
+
+    private String qnnText(int[] tokens) throws OrtException {
+        if (tokens.length == 0) {
+            return UNDEFINED_TEXT;
+        }
+        try (OnnxTensor sequence = TensorUtils.createInt32Tensor(onnxEnv, tokens, new long[]{1, 1, tokens.length});
+             OrtSession.Result result = detokenizerSession.run(Collections.singletonMap("sequences", sequence))) {
+            return correctText(((String[][]) result.get(0).getValue())[0][0]);
+        }
+    }
+
+    private void dispatchQnnResult(DataContainer data, QnnResult result) {
+        if (data.scopedCallback != null) {
+            data.scopedCompleted = true;
+            data.scopedCallback.onResult(result.first, data.languageCode, result.firstScore,
+                    result.second, data.languageCode2, result.secondScore);
+        } else if (data.languageCode2 != null) {
+            notifyMultiResult(result.first, data.languageCode, result.firstScore,
+                    result.second, data.languageCode2, result.secondScore);
+        } else {
+            notifyResult(result.first, data.languageCode, result.firstScore, true);
+        }
+    }
+
+    private void closeQnnBackend() {
+        if (qnnBackend != null) {
+            qnnBackend.close();
+            qnnBackend = null;
+        }
+        qnnPack = null;
+    }
+
+    private static final class QnnResult {
+        final String first;
+        final double firstScore;
+        final String second;
+        final double secondScore;
+
+        QnnResult(String first, double firstScore, String second, double secondScore) {
+            this.first = first;
+            this.firstScore = firstScore;
+            this.second = second;
+            this.secondScore = secondScore;
+        }
+    }
+
+    private static final class QnnTokens {
+        final int[] first;
+        final double firstScore;
+        final int[] second;
+        final double secondScore;
+
+        QnnTokens(int[] first, double firstScore, int[] second, double secondScore) {
+            this.first = first;
+            this.firstScore = firstScore;
+            this.second = second;
+            this.secondScore = secondScore;
+        }
+    }
+
+    private void recognizeOnCpu(DataContainer data) {
         if (initSession != null && encoderSession != null && cacheInitSession != null && decoderSession != null && detokenizerSession != null) {
             if (data != null) {
                 //we convert data in an audioTensor and start the transcription
@@ -600,15 +779,6 @@ public class Recognizer extends NeuralNetworkApi {
                 }
             }
         }
-        if (data != null && data.scopedCallback != null && !data.scopedCompleted) {
-            data.scopedCompleted = true;
-            data.scopedCallback.onError(new int[]{ErrorCodes.ERROR_EXECUTING_MODEL}, 0);
-        }
-        if (!dataToRecognize.isEmpty()){
-            recognize();
-        }else {
-            recognizing = false;
-        }
     }
 
     private String correctText(String text){
@@ -666,7 +836,13 @@ public class Recognizer extends NeuralNetworkApi {
     }
 
     public void destroy() {
-        //eventually if in the future I decide to load Whisper only for WalkieTalkie and Conversation then all the resources will be released here
+        synchronized (lock) {
+            if (qnnWorker != null) {
+                qnnWorker.execute(this::closeQnnBackend);
+                qnnWorker.shutdown();
+                qnnWorker = null;
+            }
+        }
     }
 
     public int getLanguageID(String language){
