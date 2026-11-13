@@ -21,6 +21,10 @@ apply plugin: 'com.android.application'
 // CN updates keep the existing CN identity. conversationBuild is a feature/build alias, not a new app.
 def conversationBuild = project.findProperty('conversationBuild') == 'true'
 def qnnWhisperTest = project.findProperty('qnnWhisperTest') == 'true'
+def mediatekWhisperTest = project.findProperty('mediatekWhisperTest') == 'true'
+if (mediatekWhisperTest && !qnnWhisperTest) {
+    throw new GradleException('The MediaTek test build also requires -PqnnWhisperTest=true')
+}
 def cnBuild = project.findProperty('cnBuild') == 'true' || conversationBuild || qnnWhisperTest
 def androidOrt = 'com.microsoft.onnxruntime:onnxruntime-android:1.30.0'
 configurations { qnnOrtNative }
@@ -43,8 +47,9 @@ android {
     ndkVersion "28.0.12674087"
     defaultConfig {
         applicationId "nie.translator.rtranslator"
-        manifestPlaceholders = [appLabel: qnnWhisperTest ? 'RTranslator NPU Test' : (cnBuild ? 'RTranslator CN' : '@string/app_name')]
+        manifestPlaceholders = [appLabel: mediatekWhisperTest ? 'RTranslator Dual NPU Test' : (qnnWhisperTest ? 'RTranslator NPU Test' : (cnBuild ? 'RTranslator CN' : '@string/app_name'))]
         buildConfigField 'boolean', 'QNN_WHISPER_TEST', qnnWhisperTest.toString()
+        buildConfigField 'boolean', 'MEDIATEK_WHISPER_TEST', mediatekWhisperTest.toString()
         targetSdkVersion 36   //32
         compileSdk 36
         versionName '3.0.0-beta2'
@@ -58,8 +63,8 @@ android {
             }
         }
         if (qnnWhisperTest) {
-            applicationIdSuffix '.cn.qnn'
-            versionNameSuffix '-cn.qnn-test.1'
+            applicationIdSuffix mediatekWhisperTest ? '.cn.npu' : '.cn.qnn'
+            versionNameSuffix mediatekWhisperTest ? '-cn.npu-test.2' : '-cn.qnn-test.1'
             versionCode 1
         }
         minSdkVersion 28
@@ -118,6 +123,7 @@ android {
             }
         }
     }
+    sourceSets.main.java.srcDir(mediatekWhisperTest ? 'src/mtk/java' : 'src/noMtk/java')
 
     signingConfigs {
         if (cnSigningReady) {
@@ -214,6 +220,10 @@ dependencies {
         }
         implementation 'com.qualcomm.qti:qnn-runtime:2.50.0'
         qnnOrtNative "${androidOrt}@aar"
+    }
+    if (mediatekWhisperTest) {
+        implementation 'com.google.ai.edge.litert:litert:2.3.0'
+        implementation 'com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.0'
     }
     implementation 'com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0'   //latest.release
     //JWS parser
